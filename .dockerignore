@@ -1,0 +1,29 @@
+# Build artifacts
+target/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Data
+data/
+
+# Docs
+*.md
+!README.md
+
+# Test scripts
+test_*.sh
+run_test.sh
+
+# Other
+.env
+*.log
