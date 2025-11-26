@@ -1,0 +1,192 @@
+use crate::types::DataType;
+use super::common::{ws, identifier, data_type, string_literal};
+use super::statement::{Statement, ColumnDef, PrivilegeType};
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, tag_no_case, take_while1},
+    character::complete::char,
+    combinator::{map, opt},
+    multi::separated_list1,
+    sequence::{delimited, preceded, tuple},
+    IResult,
+};
+
+fn column_def(input: &str) -> IResult<&str, ColumnDef> {
+    let (input, name) = ws(identifier)(input)?;
+    let (input, data_type) = ws(data_type)(input)?;
+    let (input, primary_key) = opt(ws(tag_no_case("PRIMARY KEY")))(input)?;
+    let (input, not_null) = opt(ws(tag_no_case("NOT NULL")))(input)?;
+
+    // Parse REFERENCES table(column) for foreign key
+    let (input, foreign_key) = opt(tuple((
+        ws(tag_no_case("REFERENCES")),
+        ws(identifier),
+        delimited(ws(char('(')), ws(identifier), ws(char(')'))),
+    )))(input)?;
+
+    let foreign_key = foreign_key.map(|(_, table, column)| crate::types::ForeignKey {
+        referenced_table: table,
+        referenced_column: column,
+    });
+
+    // SERIAL and BIGSERIAL columns are automatically NOT NULL and PRIMARY KEY
+    let is_serial = matches!(data_type, DataType::Serial | DataType::BigSerial);
+    let nullable = if is_serial {
+        false
+    } else {
+        not_null.is_none() && primary_key.is_none()
+    };
+    let primary_key = is_serial || primary_key.is_some();
+
+    Ok((
+        input,
+        ColumnDef {
+            name,
+            data_type,
+            nullable,
+            primary_key,
+            foreign_key,
+        },
+    ))
+}
+
+pub fn create_table(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("CREATE TABLE"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+    let (input, columns) = delimited(
+        ws(char('(')),
+        separated_list1(ws(char(',')), column_def),
+        ws(char(')')),
+    )(input)?;
+
+    Ok((input, Statement::CreateTable { name, columns }))
+}
+
+pub fn drop_table(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("DROP TABLE"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+
+    Ok((input, Statement::DropTable { name }))
+}
+
+pub fn create_database(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("CREATE DATABASE"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+
+    // Support both "WITH OWNER" (PostgreSQL) and "OWNER" (backwards compat)
+    let (input, owner) = opt(alt((
+        preceded(ws(tag_no_case("WITH OWNER")), ws(identifier)),
+        preceded(ws(tag_no_case("OWNER")), ws(identifier)),
+    )))(input)?;
+
+    Ok((input, Statement::CreateDatabase {
+        name: name.to_string(),
+        owner: owner.map(|s| s.to_string()),
+    }))
+}
+
+pub fn drop_database(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("DROP DATABASE"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+
+    Ok((input, Statement::DropDatabase {
+        name: name.to_string(),
+    }))
+}
+
+pub fn create_user(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("CREATE USER"))(input)?;
+    let (input, username) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("WITH PASSWORD"))(input)?;
+    let (input, password) = ws(string_literal)(input)?;
+    let (input, is_superuser) = opt(ws(tag_no_case("SUPERUSER")))(input)?;
+
+    Ok((input, Statement::CreateUser {
+        username: username.to_string(),
+        password,
+        is_superuser: is_superuser.is_some(),
+    }))
+}
+
+pub fn drop_user(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("DROP USER"))(input)?;
+    let (input, username) = ws(identifier)(input)?;
+
+    Ok((input, Statement::DropUser {
+        username: username.to_string(),
+    }))
+}
+
+pub fn alter_user(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("ALTER USER"))(input)?;
+    let (input, username) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("WITH PASSWORD"))(input)?;
+    let (input, password) = ws(string_literal)(input)?;
+
+    Ok((input, Statement::AlterUser {
+        username: username.to_string(),
+        password,
+    }))
+}
+
+pub fn privilege_type(input: &str) -> IResult<&str, PrivilegeType> {
+    alt((
+        map(tag_no_case("CONNECT"), |_| PrivilegeType::Connect),
+        map(tag_no_case("CREATE"), |_| PrivilegeType::Create),
+        map(tag_no_case("SELECT"), |_| PrivilegeType::Select),
+        map(tag_no_case("INSERT"), |_| PrivilegeType::Insert),
+        map(tag_no_case("UPDATE"), |_| PrivilegeType::Update),
+        map(tag_no_case("DELETE"), |_| PrivilegeType::Delete),
+        map(tag_no_case("ALL"), |_| PrivilegeType::All),
+    ))(input)
+}
+
+pub fn grant(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("GRANT"))(input)?;
+    let (input, privilege) = ws(privilege_type)(input)?;
+    let (input, _) = ws(tag_no_case("ON DATABASE"))(input)?;
+    let (input, db_name) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("TO"))(input)?;
+    let (input, username) = ws(identifier)(input)?;
+
+    Ok((input, Statement::Grant {
+        privilege,
+        on_database: db_name.to_string(),
+        to_user: username.to_string(),
+    }))
+}
+
+pub fn revoke(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("REVOKE"))(input)?;
+    let (input, privilege) = ws(privilege_type)(input)?;
+    let (input, _) = ws(tag_no_case("ON DATABASE"))(input)?;
+    let (input, db_name) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("FROM"))(input)?;
+    let (input, username) = ws(identifier)(input)?;
+
+    Ok((input, Statement::Revoke {
+        privilege,
+        on_database: db_name.to_string(),
+        from_user: username.to_string(),
+    }))
+}
+
+pub fn create_type(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("CREATE TYPE"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("AS ENUM"))(input)?;
+    let (input, _) = ws(char('('))(input)?;
+    let (input, values) = separated_list1(
+        ws(char(',')),
+        map(
+            delimited(char('\''), take_while1(|c| c != '\''), char('\'')),
+            |s: &str| s.to_string()
+        )
+    )(input)?;
+    let (input, _) = ws(char(')'))(input)?;
+
+    Ok((input, Statement::CreateType {
+        name,
+        values,
+    }))
+}

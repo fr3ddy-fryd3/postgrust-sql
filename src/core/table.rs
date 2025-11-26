@@ -1,0 +1,47 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use super::column::Column;
+use super::row::Row;
+use super::data_type::DataType;
+use super::error::DatabaseError;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Table {
+    pub name: String,
+    pub columns: Vec<Column>,
+    pub rows: Vec<Row>,
+    /// Sequence counters for SERIAL columns: column_name -> next_value
+    pub sequences: HashMap<String, i64>,
+}
+
+impl Table {
+    pub fn new(name: String, columns: Vec<Column>) -> Self {
+        let mut sequences = HashMap::new();
+
+        // Initialize sequences for SERIAL and BIGSERIAL columns
+        for col in &columns {
+            if matches!(col.data_type, DataType::Serial | DataType::BigSerial) {
+                sequences.insert(col.name.clone(), 1);
+            }
+        }
+
+        Self {
+            name,
+            columns,
+            rows: Vec::new(),
+            sequences,
+        }
+    }
+
+    pub fn insert(&mut self, row: Row) -> Result<(), DatabaseError> {
+        if row.values.len() != self.columns.len() {
+            return Err(DatabaseError::ColumnCountMismatch);
+        }
+        self.rows.push(row);
+        Ok(())
+    }
+
+    pub fn get_column_index(&self, name: &str) -> Option<usize> {
+        self.columns.iter().position(|c| c.name == name)
+    }
+}

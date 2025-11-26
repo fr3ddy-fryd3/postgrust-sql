@@ -1,14 +1,4 @@
-mod executor;
-mod parser;
-mod pg_protocol;
-mod server;
-mod storage;
-mod transaction;
-mod transaction_manager;
-mod types;
-mod wal;
-
-use server::Server;
+use postgrustql::Server;
 use std::env;
 
 /// Конфигурация сервера из ENV переменных

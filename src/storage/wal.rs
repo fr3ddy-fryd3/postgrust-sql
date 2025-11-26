@@ -1,4 +1,4 @@
-use crate::types::{Database, DatabaseError, Row, Table, Value};
+use crate::types::{Database, DatabaseError, Row, Table};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -331,7 +331,7 @@ impl WalManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Column, DataType};
+    use crate::types::{Column, DataType, Value};
     use tempfile::TempDir;
 
     #[test]

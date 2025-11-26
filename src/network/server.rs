@@ -1,9 +1,8 @@
 use crate::executor::{QueryExecutor, QueryResult};
 use crate::parser::parse_statement;
-use crate::pg_protocol::{self, frontend, transaction_status, Message, StartupMessage};
+use crate::network::pg_protocol::{self, frontend, transaction_status, Message, StartupMessage};
 use crate::storage::StorageEngine;
-use crate::transaction::Transaction;
-use crate::transaction_manager::TransactionManager;
+use crate::transaction::{Transaction, TransactionManager};
 use crate::types::{DatabaseError, ServerInstance};
 use comfy_table::{Cell, Table as ComfyTable, presets::UTF8_FULL};
 use std::collections::HashMap;

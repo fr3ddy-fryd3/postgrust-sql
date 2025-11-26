@@ -1,5 +1,5 @@
 use crate::types::{Database, DatabaseError, Row, ServerInstance, Table};
-use crate::wal::{Operation, WalManager};
+use crate::storage::wal::{Operation, WalManager};
 use std::fs;
 use std::path::{Path, PathBuf};
 

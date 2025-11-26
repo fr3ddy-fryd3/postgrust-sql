@@ -1,8 +1,8 @@
 use crate::parser::{
-    AggregateFunction, ColumnDef, Condition, CountTarget, PrivilegeType, SelectColumn, SortOrder, Statement,
+    AggregateFunction, ColumnDef, Condition, CountTarget, SelectColumn, SortOrder, Statement,
 };
 use crate::storage::StorageEngine;
-use crate::transaction_manager::TransactionManager;
+use crate::transaction::TransactionManager;
 use crate::types::{Column, Database, DatabaseError, DataType, Row, Table, Value};
 
 pub struct QueryExecutor;
@@ -1181,7 +1181,7 @@ impl QueryExecutor {
 mod tests {
     use super::*;
     use crate::parser::{SelectColumn, Statement};
-    use crate::transaction_manager::TransactionManager;
+    use crate::transaction::TransactionManager;
     use crate::types::{Column, DataType, Database, Value};
 
     fn create_test_table() -> Table {
