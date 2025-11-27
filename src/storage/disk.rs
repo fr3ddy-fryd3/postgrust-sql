@@ -326,6 +326,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                     foreign_key: None,
+                    unique: false,
             },
             crate::types::Column {
                 name: "name".to_string(),
@@ -333,6 +334,7 @@ mod tests {
                 nullable: false,
                 primary_key: false,
                     foreign_key: None,
+                    unique: false,
             },
         ];
         let table = crate::types::Table::new("users".to_string(), columns);
@@ -421,6 +423,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                     foreign_key: None,
+                    unique: false,
             },
         ];
         let mut table = crate::types::Table::new("users".to_string(), columns);
@@ -454,6 +457,7 @@ mod tests {
                     nullable: false,
                     primary_key: true,
                     foreign_key: None,
+                    unique: false,
                 },
                 crate::types::Column {
                     name: "name".to_string(),
@@ -461,6 +465,7 @@ mod tests {
                     nullable: false,
                     primary_key: false,
                     foreign_key: None,
+                    unique: false,
                 },
             ];
             let table = crate::types::Table::new("users".to_string(), columns);
@@ -543,6 +548,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                     foreign_key: None,
+                    unique: false,
             }];
             let table = crate::types::Table::new("test".to_string(), columns);
             db.create_table(table.clone()).unwrap();

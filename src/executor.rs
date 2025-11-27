@@ -2940,7 +2940,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
             ],

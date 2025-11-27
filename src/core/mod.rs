@@ -68,6 +68,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             },
             Column {
                 name: "name".to_string(),
@@ -75,6 +76,7 @@ mod tests {
                 nullable: false,
                 primary_key: false,
                 foreign_key: None,
+                unique: false,
             },
         ];
 
@@ -93,6 +95,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             },
             Column {
                 name: "name".to_string(),
@@ -100,6 +103,7 @@ mod tests {
                 nullable: false,
                 primary_key: false,
                 foreign_key: None,
+                unique: false,
             },
         ];
 
@@ -119,6 +123,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             },
         ];
 
@@ -140,6 +145,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             },
             Column {
                 name: "name".to_string(),
@@ -147,6 +153,7 @@ mod tests {
                 nullable: false,
                 primary_key: false,
                 foreign_key: None,
+                unique: false,
             },
         ];
 
@@ -173,6 +180,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             },
         ];
 
@@ -192,6 +200,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             },
         ];
 
@@ -215,6 +224,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             },
         ];
 

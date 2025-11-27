@@ -407,6 +407,7 @@ mod tests {
             nullable: false,
             primary_key: true,
                 foreign_key: None,
+                unique: false,
         }];
 
         let table = Table::new("test".to_string(), columns);
@@ -433,6 +434,7 @@ mod tests {
             nullable: false,
             primary_key: true,
                 foreign_key: None,
+                unique: false,
         }];
 
         let table = Table::new("users".to_string(), columns);
@@ -469,6 +471,7 @@ mod tests {
                 nullable: false,
                 primary_key: true,
                 foreign_key: None,
+                unique: false,
             }];
 
             let table = Table::new("users".to_string(), columns);
