@@ -477,7 +477,80 @@ INSERT INTO accounts (phone) VALUES (NULL);  -- ✓ OK (multiple NULLs allowed)
 - Ошибка: `DatabaseError::UniqueViolation`
 - Transaction-aware: проверяет только строки, видимые текущей транзакции
 
-### 15. Расширенные типы данных - РЕАЛИЗОВАНО ✅
+### 15. ALTER TABLE - РЕАЛИЗОВАНО ✅ (v1.4.1)
+**Статус:** Полная поддержка schema migrations
+**Файлы:** `src/parser/statement.rs` (AlterTableOperation enum), `src/parser/ddl.rs` (alter_table parser), `src/executor.rs:187-372` (implementation), `src/storage/wal.rs` (WAL operations)
+
+**Что РАБОТАЕТ:**
+- ✅ ADD COLUMN - добавление новой колонки
+- ✅ DROP COLUMN - удаление колонки
+- ✅ RENAME COLUMN - переименование колонки
+- ✅ RENAME TO - переименование таблицы
+- ✅ Полная WAL интеграция для crash recovery
+- ✅ Валидация ограничений (PRIMARY KEY, FOREIGN KEY, ENUM types)
+
+**Синтаксис:**
+```sql
+-- ADD COLUMN
+ALTER TABLE table_name ADD COLUMN column_name data_type [constraints];
+
+-- DROP COLUMN
+ALTER TABLE table_name DROP COLUMN column_name;
+
+-- RENAME COLUMN
+ALTER TABLE table_name RENAME COLUMN old_name TO new_name;
+
+-- RENAME TABLE
+ALTER TABLE old_table_name RENAME TO new_table_name;
+```
+
+**Примеры:**
+```sql
+CREATE TABLE users (id SERIAL, name TEXT NOT NULL);
+INSERT INTO users (name) VALUES ('Alice'), ('Bob');
+
+-- ADD COLUMN: добавляет NULL ко всем существующим строкам
+ALTER TABLE users ADD COLUMN age INTEGER;
+SELECT * FROM users;  -- id=1, name=Alice, age=NULL; id=2, name=Bob, age=NULL
+
+-- RENAME COLUMN
+ALTER TABLE users RENAME COLUMN age TO years_old;
+
+-- DROP COLUMN
+ALTER TABLE users DROP COLUMN years_old;
+
+-- RENAME TABLE
+ALTER TABLE users RENAME TO people;
+\dt  -- Shows 'people' instead of 'users'
+```
+
+**Валидация и ограничения:**
+- **ADD COLUMN:**
+  - Проверяет уникальность имени колонки
+  - Валидирует ENUM types (если тип ENUM, он должен существовать)
+  - Валидирует FOREIGN KEY (referenced table/column должны существовать)
+  - Добавляет NULL ко всем существующим строкам
+- **DROP COLUMN:**
+  - Защищает PRIMARY KEY колонки от удаления
+  - Удаляет values из всех строк
+- **RENAME COLUMN:**
+  - Проверяет что старая колонка существует
+  - Проверяет что новое имя уникально
+- **RENAME TO:**
+  - Проверяет что новое имя таблицы не занято
+
+**WAL интеграция:**
+- Все операции логируются в WAL для crash recovery
+- Операции: `AlterTableAddColumn`, `AlterTableDropColumn`, `AlterTableRenameColumn`, `AlterTableRename`
+- При recovery WAL операции применяются к схеме базы данных
+
+**Ограничения (не реализовано):**
+- ALTER COLUMN TYPE - изменение типа колонки
+- ALTER COLUMN SET/DROP NOT NULL - изменение nullable
+- ALTER COLUMN SET DEFAULT - установка default значения
+- ADD CONSTRAINT / DROP CONSTRAINT - управление ограничениями
+
+### 16. Расширенные типы данных - РЕАЛИЗОВАНО ✅
 **Статус:** 23 типа данных (~45% PostgreSQL compatibility)
 **Файлы:** `src/core/value.rs`, `src/core/data_type.rs`, `src/parser/common.rs` (smart parsing), `src/executor.rs` (validation)
 **Тестирование:** `./tests/integration/test_new_types.sh` - полный тест всех типов
@@ -733,9 +806,18 @@ pkill postgrustql
 
 ## Текущая версия и Git Workflow
 
-### Версия: v1.4.0
+### Версия: v1.4.1
 
 **Changelog:**
+- **v1.4.1** (feat): ALTER TABLE schema migrations
+  - ALTER TABLE ADD COLUMN - добавление новых колонок
+  - ALTER TABLE DROP COLUMN - удаление колонок (защита PRIMARY KEY)
+  - ALTER TABLE RENAME COLUMN - переименование колонок
+  - ALTER TABLE RENAME TO - переименование таблиц
+  - Полная WAL интеграция (4 новых Operation типа)
+  - Валидация FOREIGN KEY, ENUM types, PRIMARY KEY
+  - Manually tested all operations
+
 - **v1.4.0** (feat): Query enhancements - OFFSET, DISTINCT, UNIQUE
   - OFFSET clause for pagination (works with LIMIT)
   - DISTINCT keyword for unique value queries
