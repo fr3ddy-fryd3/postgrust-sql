@@ -1,4 +1,4 @@
-use crate::types::{Database, DatabaseError, Row, Table};
+use crate::types::{Column, Database, DatabaseError, Row, Table};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -36,6 +36,27 @@ pub enum Operation {
     /// Checkpoint marker - указывает что был создан snapshot
     Checkpoint {
         timestamp: u64,
+    },
+    /// ALTER TABLE ADD COLUMN
+    AlterTableAddColumn {
+        table_name: String,
+        column: Column,
+    },
+    /// ALTER TABLE DROP COLUMN
+    AlterTableDropColumn {
+        table_name: String,
+        column_name: String,
+    },
+    /// ALTER TABLE RENAME COLUMN
+    AlterTableRenameColumn {
+        table_name: String,
+        old_name: String,
+        new_name: String,
+    },
+    /// ALTER TABLE RENAME TO
+    AlterTableRename {
+        old_table_name: String,
+        new_table_name: String,
     },
 }
 
@@ -283,6 +304,38 @@ impl WalManager {
             }
             Operation::Checkpoint { .. } => {
                 // Checkpoint marker - ничего не делаем
+            }
+            Operation::AlterTableAddColumn { table_name, column } => {
+                if let Some(table) = db.get_table_mut(table_name) {
+                    table.columns.push(column.clone());
+                    // Add NULL value to all existing rows
+                    for row in &mut table.rows {
+                        row.values.push(crate::types::Value::Null);
+                    }
+                }
+            }
+            Operation::AlterTableDropColumn { table_name, column_name } => {
+                if let Some(table) = db.get_table_mut(table_name) {
+                    if let Some(col_idx) = table.get_column_index(column_name) {
+                        table.columns.remove(col_idx);
+                        for row in &mut table.rows {
+                            row.values.remove(col_idx);
+                        }
+                    }
+                }
+            }
+            Operation::AlterTableRenameColumn { table_name, old_name, new_name } => {
+                if let Some(table) = db.get_table_mut(table_name) {
+                    if let Some(col_idx) = table.get_column_index(old_name) {
+                        table.columns[col_idx].name = new_name.clone();
+                    }
+                }
+            }
+            Operation::AlterTableRename { old_table_name, new_table_name } => {
+                if let Some(mut table) = db.tables.remove(old_table_name) {
+                    table.name = new_table_name.clone();
+                    db.tables.insert(new_table_name.clone(), table);
+                }
             }
         }
 

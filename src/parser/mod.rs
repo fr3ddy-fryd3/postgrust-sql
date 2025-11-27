@@ -11,6 +11,7 @@ mod transaction;
 pub use statement::{
     Statement,
     ColumnDef,
+    AlterTableOperation,
     Condition,
     SortOrder,
     SelectColumn,
@@ -45,6 +46,7 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
         ddl::revoke,
         ddl::create_table,
         ddl::drop_table,
+        ddl::alter_table,
         dml::insert,
         queries::select,
         dml::update,

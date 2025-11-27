@@ -9,6 +9,10 @@ pub enum Statement {
     DropTable {
         name: String,
     },
+    AlterTable {
+        name: String,
+        operation: AlterTableOperation,
+    },
     Insert {
         table: String,
         columns: Option<Vec<String>>,
@@ -99,6 +103,14 @@ pub struct ColumnDef {
     pub primary_key: bool,
     pub unique: bool,
     pub foreign_key: Option<crate::types::ForeignKey>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlterTableOperation {
+    AddColumn(ColumnDef),
+    DropColumn(String),
+    RenameColumn { old_name: String, new_name: String },
+    RenameTable(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -193,3 +193,51 @@ pub fn create_type(input: &str) -> IResult<&str, Statement> {
         values,
     }))
 }
+
+pub fn alter_table(input: &str) -> IResult<&str, Statement> {
+    use super::statement::AlterTableOperation;
+    
+    let (input, _) = ws(tag_no_case("ALTER TABLE"))(input)?;
+    let (input, table_name) = ws(identifier)(input)?;
+    
+    // Try different ALTER TABLE operations
+    let (input, operation) = alt((
+        // ADD COLUMN
+        map(
+            preceded(
+                ws(tag_no_case("ADD COLUMN")),
+                column_def
+            ),
+            AlterTableOperation::AddColumn
+        ),
+        // DROP COLUMN
+        map(
+            preceded(
+                ws(tag_no_case("DROP COLUMN")),
+                ws(identifier)
+            ),
+            AlterTableOperation::DropColumn
+        ),
+        // RENAME COLUMN
+        map(
+            tuple((
+                preceded(ws(tag_no_case("RENAME COLUMN")), ws(identifier)),
+                preceded(ws(tag_no_case("TO")), ws(identifier)),
+            )),
+            |(old_name, new_name)| AlterTableOperation::RenameColumn { old_name, new_name }
+        ),
+        // RENAME TO (rename table)
+        map(
+            preceded(
+                ws(tag_no_case("RENAME TO")),
+                ws(identifier)
+            ),
+            AlterTableOperation::RenameTable
+        ),
+    ))(input)?;
+    
+    Ok((input, Statement::AlterTable {
+        name: table_name,
+        operation,
+    }))
+}

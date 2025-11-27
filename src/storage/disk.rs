@@ -1,4 +1,4 @@
-use crate::types::{Database, DatabaseError, Row, ServerInstance, Table};
+use crate::types::{Column, Database, DatabaseError, Row, ServerInstance, Table};
 use crate::storage::wal::{Operation, WalManager};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -210,6 +210,47 @@ impl StorageEngine {
         self.wal.append(Operation::Delete {
             table_name: table_name.to_string(),
             row_index,
+        })?;
+        self.operations_since_snapshot += 1;
+        Ok(())
+    }
+
+    /// Логирует ALTER TABLE ADD COLUMN операцию
+    pub fn log_alter_table_add_column(&mut self, table_name: &str, column: &Column) -> Result<(), DatabaseError> {
+        self.wal.append(Operation::AlterTableAddColumn {
+            table_name: table_name.to_string(),
+            column: column.clone(),
+        })?;
+        self.operations_since_snapshot += 1;
+        Ok(())
+    }
+
+    /// Логирует ALTER TABLE DROP COLUMN операцию
+    pub fn log_alter_table_drop_column(&mut self, table_name: &str, column_name: &str) -> Result<(), DatabaseError> {
+        self.wal.append(Operation::AlterTableDropColumn {
+            table_name: table_name.to_string(),
+            column_name: column_name.to_string(),
+        })?;
+        self.operations_since_snapshot += 1;
+        Ok(())
+    }
+
+    /// Логирует ALTER TABLE RENAME COLUMN операцию
+    pub fn log_alter_table_rename_column(&mut self, table_name: &str, old_name: &str, new_name: &str) -> Result<(), DatabaseError> {
+        self.wal.append(Operation::AlterTableRenameColumn {
+            table_name: table_name.to_string(),
+            old_name: old_name.to_string(),
+            new_name: new_name.to_string(),
+        })?;
+        self.operations_since_snapshot += 1;
+        Ok(())
+    }
+
+    /// Логирует ALTER TABLE RENAME TO операцию
+    pub fn log_alter_table_rename(&mut self, old_table_name: &str, new_table_name: &str) -> Result<(), DatabaseError> {
+        self.wal.append(Operation::AlterTableRename {
+            old_table_name: old_table_name.to_string(),
+            new_table_name: new_table_name.to_string(),
         })?;
         self.operations_since_snapshot += 1;
         Ok(())

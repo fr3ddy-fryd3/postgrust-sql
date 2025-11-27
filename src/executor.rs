@@ -26,6 +26,9 @@ impl QueryExecutor {
                 Self::create_table(db, name, columns, storage)
             }
             Statement::DropTable { name } => Self::drop_table(db, name, storage),
+            Statement::AlterTable { name, operation } => {
+                Self::alter_table(db, name, operation, storage)
+            }
             Statement::Insert {
                 table,
                 columns,
@@ -179,6 +182,193 @@ impl QueryExecutor {
             "Table '{}' dropped successfully",
             name
         )))
+    }
+
+    fn alter_table(
+        db: &mut Database,
+        table_name: String,
+        operation: crate::parser::AlterTableOperation,
+        storage: Option<&mut StorageEngine>,
+    ) -> Result<QueryResult, DatabaseError> {
+        use crate::parser::AlterTableOperation;
+        use crate::types::Column;
+
+        // Check table exists
+        let _table = db
+            .get_table(&table_name)
+            .ok_or_else(|| DatabaseError::TableNotFound(table_name.clone()))?;
+
+        match operation {
+            AlterTableOperation::AddColumn(column_def) => {
+                // Convert ColumnDef to Column (same logic as CREATE TABLE)
+                let data_type = match &column_def.data_type {
+                    crate::types::DataType::Enum { name, .. } => {
+                        // Verify enum type exists
+                        if !db.enums.contains_key(name) {
+                            return Err(DatabaseError::ParseError(format!(
+                                "Unknown enum type '{}'", name
+                            )));
+                        }
+                        column_def.data_type.clone()
+                    }
+                    other => other.clone(),
+                };
+
+                let new_column = Column {
+                    name: column_def.name.clone(),
+                    data_type,
+                    nullable: column_def.nullable,
+                    primary_key: column_def.primary_key,
+                    unique: column_def.unique,
+                    foreign_key: column_def.foreign_key.clone(),
+                };
+
+                // Validate FK if present
+                if let Some(ref fk) = new_column.foreign_key {
+                    let ref_table = db.get_table(&fk.referenced_table).ok_or_else(|| {
+                        DatabaseError::ForeignKeyViolation(format!(
+                            "Referenced table '{}' does not exist",
+                            fk.referenced_table
+                        ))
+                    })?;
+
+                    let ref_col = ref_table
+                        .columns
+                        .iter()
+                        .find(|c| c.name == fk.referenced_column)
+                        .ok_or_else(|| {
+                            DatabaseError::ForeignKeyViolation(format!(
+                                "Referenced column '{}' not found in table '{}'",
+                                fk.referenced_column, fk.referenced_table
+                            ))
+                        })?;
+
+                    if !ref_col.primary_key {
+                        return Err(DatabaseError::ForeignKeyViolation(format!(
+                            "Referenced column '{}.{}' must be a PRIMARY KEY",
+                            fk.referenced_table, fk.referenced_column
+                        )));
+                    }
+                }
+
+                // Add column to table
+                let table = db.get_table_mut(&table_name).unwrap();
+
+                // Check if column already exists
+                if table.columns.iter().any(|c| c.name == new_column.name) {
+                    return Err(DatabaseError::ParseError(format!(
+                        "Column '{}' already exists in table '{}'",
+                        new_column.name, table_name
+                    )));
+                }
+
+                table.columns.push(new_column.clone());
+
+                // Add NULL value to all existing rows for new column
+                for row in &mut table.rows {
+                    row.values.push(crate::types::Value::Null);
+                }
+
+                // Log to WAL
+                if let Some(storage) = storage {
+                    storage.log_alter_table_add_column(&table_name, &new_column)?;
+                }
+
+                Ok(QueryResult::Success(format!(
+                    "Column '{}' added to table '{}'",
+                    column_def.name, table_name
+                )))
+            }
+
+            AlterTableOperation::DropColumn(column_name) => {
+                let table = db.get_table_mut(&table_name).unwrap();
+
+                // Find column index
+                let col_idx = table
+                    .get_column_index(&column_name)
+                    .ok_or_else(|| DatabaseError::ColumnNotFound(column_name.clone()))?;
+
+                // Check if it's a PRIMARY KEY
+                if table.columns[col_idx].primary_key {
+                    return Err(DatabaseError::ParseError(
+                        "Cannot drop PRIMARY KEY column".to_string(),
+                    ));
+                }
+
+                // Remove column
+                table.columns.remove(col_idx);
+
+                // Remove corresponding value from all rows
+                for row in &mut table.rows {
+                    row.values.remove(col_idx);
+                }
+
+                // Log to WAL
+                if let Some(storage) = storage {
+                    storage.log_alter_table_drop_column(&table_name, &column_name)?;
+                }
+
+                Ok(QueryResult::Success(format!(
+                    "Column '{}' dropped from table '{}'",
+                    column_name, table_name
+                )))
+            }
+
+            AlterTableOperation::RenameColumn { old_name, new_name } => {
+                let table = db.get_table_mut(&table_name).unwrap();
+
+                // Find column
+                let col_idx = table
+                    .get_column_index(&old_name)
+                    .ok_or_else(|| DatabaseError::ColumnNotFound(old_name.clone()))?;
+
+                // Check if new name already exists
+                if table.columns.iter().any(|c| c.name == new_name) {
+                    return Err(DatabaseError::ParseError(format!(
+                        "Column '{}' already exists",
+                        new_name
+                    )));
+                }
+
+                // Rename
+                table.columns[col_idx].name = new_name.clone();
+
+                // Log to WAL
+                if let Some(storage) = storage {
+                    storage.log_alter_table_rename_column(&table_name, &old_name, &new_name)?;
+                }
+
+                Ok(QueryResult::Success(format!(
+                    "Column '{}' renamed to '{}' in table '{}'",
+                    old_name, new_name, table_name
+                )))
+            }
+
+            AlterTableOperation::RenameTable(new_table_name) => {
+                // Check if new name already exists
+                if db.tables.contains_key(&new_table_name) {
+                    return Err(DatabaseError::TableAlreadyExists(new_table_name));
+                }
+
+                // Rename table
+                if let Some(mut table) = db.tables.remove(&table_name) {
+                    table.name = new_table_name.clone();
+                    db.tables.insert(new_table_name.clone(), table);
+                } else {
+                    return Err(DatabaseError::TableNotFound(table_name));
+                }
+
+                // Log to WAL
+                if let Some(storage) = storage {
+                    storage.log_alter_table_rename(&table_name, &new_table_name)?;
+                }
+
+                Ok(QueryResult::Success(format!(
+                    "Table '{}' renamed to '{}'",
+                    table_name, new_table_name
+                )))
+            }
+        }
     }
 
     fn insert(
