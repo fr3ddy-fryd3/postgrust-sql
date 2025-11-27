@@ -195,8 +195,23 @@ pub fn limit(input: &str) -> IResult<&str, Option<usize>> {
     ))(input)
 }
 
+pub fn offset(input: &str) -> IResult<&str, Option<usize>> {
+    opt(preceded(
+        ws(tag_no_case("OFFSET")),
+        map(
+            take_while1(|c: char| c.is_numeric()),
+            |s: &str| s.parse::<usize>().unwrap(),
+        ),
+    ))(input)
+}
+
 pub fn select(input: &str) -> IResult<&str, Statement> {
     let (input, _) = ws(tag_no_case("SELECT"))(input)?;
+
+    // Parse optional DISTINCT keyword
+    let (input, distinct) = opt(ws(tag_no_case("DISTINCT")))(input)?;
+    let distinct = distinct.is_some();
+
     let (input, columns) = separated_list1(ws(char(',')), select_column)(input)?;
     let (input, _) = ws(tag_no_case("FROM"))(input)?;
     let (input, from) = ws(identifier)(input)?;
@@ -215,9 +230,13 @@ pub fn select(input: &str) -> IResult<&str, Statement> {
     // Parse optional LIMIT clause
     let (input, limit) = limit(input)?;
 
+    // Parse optional OFFSET clause
+    let (input, offset) = offset(input)?;
+
     Ok((
         input,
         Statement::Select {
+            distinct,
             columns,
             from,
             joins,
@@ -225,6 +244,7 @@ pub fn select(input: &str) -> IResult<&str, Statement> {
             group_by,
             order_by,
             limit,
+            offset,
         },
     ))
 }

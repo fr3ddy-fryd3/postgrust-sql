@@ -380,7 +380,104 @@ SELECT * FROM users;
 - При INSERT: если SERIAL column = NULL → подставляется sequence value
 - После INSERT: `sequence = max(current_seq, inserted_value + 1)`
 
-### 12. Расширенные типы данных - РЕАЛИЗОВАНО ✅
+### 12. OFFSET - РЕАЛИЗОВАНО ✅ (v1.4.0)
+**Статус:** Полная поддержка pagination
+**Файлы:** `src/parser/statement.rs` (Statement::Select), `src/parser/queries.rs` (offset parser), `src/executor.rs` (skip rows)
+
+**Что РАБОТАЕТ:**
+- ✅ Пропуск N строк перед возвратом результатов
+- ✅ Комбинация с LIMIT для pagination
+- ✅ Работает с ORDER BY, WHERE, DISTINCT
+- ✅ Применяется после сортировки, но перед LIMIT
+
+**Синтаксис:**
+```sql
+SELECT * FROM table OFFSET 10;              -- Skip first 10 rows
+SELECT * FROM table LIMIT 20 OFFSET 10;     -- Pagination: rows 11-30
+SELECT * FROM table WHERE age > 18 ORDER BY name LIMIT 10 OFFSET 5;
+```
+
+**Примеры:**
+```sql
+CREATE TABLE items (id SERIAL, name TEXT);
+INSERT INTO items (name) VALUES ('A'), ('B'), ('C'), ('D'), ('E');
+SELECT * FROM items OFFSET 2;              -- Returns C, D, E (skip first 2)
+SELECT * FROM items LIMIT 2 OFFSET 1;      -- Returns B, C (skip 1, take 2)
+```
+
+**Порядок выполнения:**
+WHERE → ORDER BY → DISTINCT → OFFSET → LIMIT
+
+### 13. DISTINCT - РЕАЛИЗОВАНО ✅ (v1.4.0)
+**Статус:** Полная поддержка unique value queries
+**Файлы:** `src/parser/statement.rs` (distinct bool), `src/parser/queries.rs` (DISTINCT keyword), `src/executor.rs` (HashSet dedup)
+
+**Что РАБОТАЕТ:**
+- ✅ Возвращает только уникальные строки
+- ✅ Работает с одной колонкой или SELECT *
+- ✅ Комбинируется с LIMIT, OFFSET, WHERE, ORDER BY
+- ✅ HashSet-based deduplication с сохранением порядка
+
+**Синтаксис:**
+```sql
+SELECT DISTINCT column FROM table;
+SELECT DISTINCT * FROM table;
+SELECT DISTINCT col1, col2 FROM table WHERE condition;
+```
+
+**Примеры:**
+```sql
+CREATE TABLE cities (id SERIAL, name TEXT);
+INSERT INTO cities (name) VALUES ('NYC'), ('LA'), ('NYC'), ('SF'), ('LA');
+SELECT DISTINCT name FROM cities;           -- Returns: NYC, LA, SF (3 rows instead of 5)
+SELECT DISTINCT * FROM cities;              -- Returns: all 5 rows (id makes each unique)
+SELECT DISTINCT name FROM cities LIMIT 2;   -- Returns: NYC, LA (first 2 unique)
+```
+
+**Архитектура:**
+- Использует `HashSet<Vec<String>>` для отслеживания уже виденных строк
+- `.retain()` фильтрует дубликаты с сохранением порядка вставки
+- Применяется перед OFFSET/LIMIT для корректной pagination
+
+### 14. UNIQUE constraint - РЕАЛИЗОВАНО ✅ (v1.4.0)
+**Статус:** Полная валидация уникальности колонок
+**Файлы:** `src/core/column.rs` (unique field), `src/core/error.rs` (UniqueViolation), `src/parser/ddl.rs` (UNIQUE keyword), `src/executor.rs` (validation)
+
+**Что РАБОТАЕТ:**
+- ✅ UNIQUE constraint на колонки (синтаксис CREATE TABLE)
+- ✅ Валидация при INSERT (проверка дубликатов)
+- ✅ NULL значения разрешены в UNIQUE колонках
+- ✅ PRIMARY KEY автоматически enforces uniqueness
+- ✅ MVCC-aware validation (проверяет только видимые строки)
+
+**Синтаксис:**
+```sql
+CREATE TABLE users (
+    id SERIAL,
+    email TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE
+);
+```
+
+**Примеры:**
+```sql
+CREATE TABLE users (id SERIAL, email TEXT UNIQUE NOT NULL);
+INSERT INTO users (email) VALUES ('alice@test.com');  -- ✓ OK
+INSERT INTO users (email) VALUES ('bob@test.com');    -- ✓ OK
+INSERT INTO users (email) VALUES ('alice@test.com');  -- ✗ Error: UNIQUE constraint violation
+
+-- NULL values are allowed in UNIQUE columns (SQL standard)
+CREATE TABLE accounts (id SERIAL, phone TEXT UNIQUE);
+INSERT INTO accounts (phone) VALUES (NULL);  -- ✓ OK
+INSERT INTO accounts (phone) VALUES (NULL);  -- ✓ OK (multiple NULLs allowed)
+```
+
+**Валидация:**
+- Проверяется перед INSERT (после FK validation, перед MVCC)
+- Ошибка: `DatabaseError::UniqueViolation`
+- Transaction-aware: проверяет только строки, видимые текущей транзакции
+
+### 15. Расширенные типы данных - РЕАЛИЗОВАНО ✅
 **Статус:** 23 типа данных (~45% PostgreSQL compatibility)
 **Файлы:** `src/core/value.rs`, `src/core/data_type.rs`, `src/parser/common.rs` (smart parsing), `src/executor.rs` (validation)
 **Тестирование:** `./tests/integration/test_new_types.sh` - полный тест всех типов
@@ -636,9 +733,16 @@ pkill postgrustql
 
 ## Текущая версия и Git Workflow
 
-### Версия: v1.3.2
+### Версия: v1.4.0
 
 **Changelog:**
+- **v1.4.0** (feat): Query enhancements - OFFSET, DISTINCT, UNIQUE
+  - OFFSET clause for pagination (works with LIMIT)
+  - DISTINCT keyword for unique value queries
+  - UNIQUE constraint for column uniqueness validation
+  - Integration test script: tests/integration/test_v1.4.0.sh
+  - All features fully tested and working
+
 - **v1.3.2** (refactor): Modular architecture - organized code into logical modules
   - Moved tests/ → tests/integration, tests/recovery, tests/syntax
   - Split types.rs → core/* modules (13 files: database.rs, table.rs, row.rs, value.rs, etc.)

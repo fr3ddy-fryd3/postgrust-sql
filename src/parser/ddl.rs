@@ -15,6 +15,7 @@ fn column_def(input: &str) -> IResult<&str, ColumnDef> {
     let (input, name) = ws(identifier)(input)?;
     let (input, data_type) = ws(data_type)(input)?;
     let (input, primary_key) = opt(ws(tag_no_case("PRIMARY KEY")))(input)?;
+    let (input, unique_kw) = opt(ws(tag_no_case("UNIQUE")))(input)?;
     let (input, not_null) = opt(ws(tag_no_case("NOT NULL")))(input)?;
 
     // Parse REFERENCES table(column) for foreign key
@@ -37,6 +38,7 @@ fn column_def(input: &str) -> IResult<&str, ColumnDef> {
         not_null.is_none() && primary_key.is_none()
     };
     let primary_key = is_serial || primary_key.is_some();
+    let unique = unique_kw.is_some();
 
     Ok((
         input,
@@ -45,6 +47,7 @@ fn column_def(input: &str) -> IResult<&str, ColumnDef> {
             data_type,
             nullable,
             primary_key,
+            unique,
             foreign_key,
         },
     ))

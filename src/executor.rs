@@ -32,6 +32,7 @@ impl QueryExecutor {
                 values,
             } => Self::insert(db, table, columns, values, storage, tx_manager),
             Statement::Select {
+                distinct,
                 columns,
                 from,
                 joins,
@@ -39,7 +40,8 @@ impl QueryExecutor {
                 group_by,
                 order_by,
                 limit,
-            } => Self::select(db, columns, from, joins, filter, group_by, order_by, limit, tx_manager),
+                offset,
+            } => Self::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager),
             Statement::Update {
                 table,
                 assignments,
@@ -117,6 +119,7 @@ impl QueryExecutor {
                     data_type,
                     nullable: def.nullable,
                     primary_key: def.primary_key,
+                    unique: def.unique,
                     foreign_key: def.foreign_key.clone(),
                 })
             })
@@ -322,6 +325,30 @@ impl QueryExecutor {
             }
         }
 
+        // Validate UNIQUE constraints
+        for (idx, col) in table.columns.iter().enumerate() {
+            if col.unique || col.primary_key {
+                let value = &ordered_values[idx];
+
+                // NULL values are allowed in UNIQUE columns (unless NOT NULL)
+                if matches!(value, Value::Null) {
+                    continue;
+                }
+
+                // Check if value already exists in this column
+                let current_tx_id = tx_manager.current_tx_id();
+                let exists = table.rows.iter()
+                    .any(|row| row.is_visible(current_tx_id) && &row.values[idx] == value);
+
+                if exists {
+                    return Err(DatabaseError::UniqueViolation(
+                        format!("UNIQUE constraint violation: value {:?} already exists in column '{}'",
+                                value, col.name)
+                    ));
+                }
+            }
+        }
+
         // Get current transaction ID for MVCC
         let current_tx_id = tx_manager.current_tx_id();
         let row = Row::new_with_xmin(ordered_values.clone(), current_tx_id);
@@ -355,6 +382,7 @@ impl QueryExecutor {
 
     fn select(
         db: &Database,
+        distinct: bool,
         columns: Vec<SelectColumn>,
         from: String,
         joins: Vec<crate::parser::JoinClause>,
@@ -362,11 +390,12 @@ impl QueryExecutor {
         group_by: Option<Vec<String>>,
         order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
+        offset: Option<usize>,
         tx_manager: &TransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         // Check if this is a JOIN query
         if !joins.is_empty() {
-            return Self::select_with_join(db, columns, from, joins, filter, order_by, limit, tx_manager);
+            return Self::select_with_join(db, distinct, columns, from, joins, filter, order_by, limit, offset, tx_manager);
         }
 
         // Check if this is an aggregate query
@@ -375,21 +404,23 @@ impl QueryExecutor {
             .any(|col| matches!(col, SelectColumn::Aggregate(_)));
 
         if group_by.is_some() {
-            Self::select_with_group_by(db, columns, from, filter, group_by.unwrap(), order_by, limit, tx_manager)
+            Self::select_with_group_by(db, distinct, columns, from, filter, group_by.unwrap(), order_by, limit, offset, tx_manager)
         } else if has_aggregates {
-            Self::select_aggregate(db, columns, from, filter, tx_manager)
+            Self::select_aggregate(db, distinct, columns, from, filter, tx_manager)
         } else {
-            Self::select_regular(db, columns, from, filter, order_by, limit, tx_manager)
+            Self::select_regular(db, distinct, columns, from, filter, order_by, limit, offset, tx_manager)
         }
     }
 
     fn select_regular(
         db: &Database,
+        distinct: bool,
         columns: Vec<SelectColumn>,
         from: String,
         filter: Option<Condition>,
         order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
+        offset: Option<usize>,
         tx_manager: &TransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db
@@ -488,12 +519,25 @@ impl QueryExecutor {
             });
         }
 
-        // Extract result rows and apply LIMIT if specified
+        // Extract result rows
         let mut result_rows: Vec<Vec<String>> = rows_with_data
             .into_iter()
             .map(|(_, row_data)| row_data)
             .collect();
 
+        // Apply DISTINCT if specified
+        if distinct {
+            use std::collections::HashSet;
+            let mut seen: HashSet<Vec<String>> = HashSet::new();
+            result_rows.retain(|row| seen.insert(row.clone()));
+        }
+
+        // Apply OFFSET
+        if let Some(offset_val) = offset {
+            result_rows = result_rows.into_iter().skip(offset_val).collect();
+        }
+
+        // Apply LIMIT
         if let Some(limit_val) = limit {
             result_rows.truncate(limit_val);
         }
@@ -503,6 +547,7 @@ impl QueryExecutor {
 
     fn select_aggregate(
         db: &Database,
+        _distinct: bool,
         columns: Vec<SelectColumn>,
         from: String,
         filter: Option<Condition>,
@@ -702,12 +747,14 @@ impl QueryExecutor {
 
     fn select_with_group_by(
         db: &Database,
+        distinct: bool,
         columns: Vec<SelectColumn>,
         from: String,
         filter: Option<Condition>,
         group_by: Vec<String>,
         order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
+        offset: Option<usize>,
         tx_manager: &TransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         use std::collections::HashMap;
@@ -823,7 +870,18 @@ impl QueryExecutor {
             });
         }
 
-        // Apply LIMIT if specified
+        // Apply DISTINCT if specified
+        if distinct {
+            use std::collections::HashSet;
+            let mut seen: HashSet<Vec<String>> = HashSet::new();
+            result_rows.retain(|row| seen.insert(row.clone()));
+        }
+
+        // Apply OFFSET + LIMIT if specified
+        if let Some(offset_val) = offset {
+            result_rows = result_rows.into_iter().skip(offset_val).collect();
+        }
+
         if let Some(limit_count) = limit {
             result_rows.truncate(limit_count);
         }
@@ -1032,12 +1090,14 @@ impl QueryExecutor {
 
     fn select_with_join(
         db: &Database,
+        distinct: bool,
         _columns: Vec<SelectColumn>,
         from: String,
         joins: Vec<crate::parser::JoinClause>,
         _filter: Option<Condition>,
         _order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
+        offset: Option<usize>,
         tx_manager: &TransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         use crate::parser::JoinType;
@@ -1166,7 +1226,18 @@ impl QueryExecutor {
             }
         }
 
-        // Apply LIMIT if specified
+        // Apply DISTINCT if specified
+        if distinct {
+            use std::collections::HashSet;
+            let mut seen: HashSet<Vec<String>> = HashSet::new();
+            result_rows.retain(|row| seen.insert(row.clone()));
+        }
+
+        // Apply OFFSET + LIMIT if specified
+        if let Some(offset_val) = offset {
+            result_rows = result_rows.into_iter().skip(offset_val).collect();
+        }
+
         if let Some(limit_val) = limit {
             result_rows.truncate(limit_val);
         }
@@ -1191,6 +1262,7 @@ mod tests {
                 data_type: DataType::Integer,
                 nullable: false,
                 primary_key: true,
+                unique: false,
                     foreign_key: None,
             },
             Column {
@@ -1198,6 +1270,7 @@ mod tests {
                 data_type: DataType::Text,
                 nullable: false,
                 primary_key: false,
+                unique: false,
                     foreign_key: None,
             },
             Column {
@@ -1205,6 +1278,7 @@ mod tests {
                 data_type: DataType::Integer,
                 nullable: true,
                 primary_key: false,
+                unique: false,
                     foreign_key: None,
             },
         ];
@@ -1222,6 +1296,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
+                unique: false,
                     foreign_key: None,
                 },
                 crate::parser::ColumnDef {
@@ -1229,6 +1304,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
             ],
@@ -1325,6 +1401,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1332,6 +1409,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1366,6 +1444,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1376,6 +1455,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1403,6 +1483,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("name".to_string()), SelectColumn::Regular("age".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1410,6 +1491,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1469,6 +1551,7 @@ mod tests {
 
         // Verify using SELECT (respects MVCC visibility)
         let select_stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("age".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1479,6 +1562,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
@@ -1529,6 +1613,7 @@ mod tests {
 
         // Verify using SELECT (respects MVCC visibility)
         let select_stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("age".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1536,6 +1621,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
@@ -1589,6 +1675,7 @@ mod tests {
 
         // Verify using SELECT (respects MVCC visibility)
         let select_stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("name".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1596,6 +1683,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
@@ -1645,6 +1733,7 @@ mod tests {
 
         // Verify using SELECT (respects MVCC visibility)
         let select_stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1652,6 +1741,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
@@ -1677,6 +1767,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1687,6 +1778,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1720,6 +1812,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1730,6 +1823,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1771,6 +1865,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1787,6 +1882,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1828,6 +1924,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1844,6 +1941,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1884,6 +1982,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1891,6 +1990,7 @@ mod tests {
             group_by: None,
             order_by: Some(("age".to_string(), crate::parser::SortOrder::Asc)),
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1934,6 +2034,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1941,6 +2042,7 @@ mod tests {
             group_by: None,
             order_by: Some(("age".to_string(), crate::parser::SortOrder::Desc)),
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -1984,6 +2086,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -1991,6 +2094,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: Some(2),
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2031,6 +2135,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Regular("*".to_string())],
             from: "users".to_string(),
                 joins: vec![],
@@ -2038,6 +2143,7 @@ mod tests {
             group_by: None,
             order_by: Some(("age".to_string(), crate::parser::SortOrder::Desc)),
             limit: Some(2),
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2080,6 +2186,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Aggregate(
                 crate::parser::AggregateFunction::Count(crate::parser::CountTarget::All),
             )],
@@ -2089,6 +2196,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2130,6 +2238,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Aggregate(
                 crate::parser::AggregateFunction::Sum("age".to_string()),
             )],
@@ -2139,6 +2248,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2180,6 +2290,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Aggregate(
                 crate::parser::AggregateFunction::Avg("age".to_string()),
             )],
@@ -2189,6 +2300,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2230,6 +2342,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Aggregate(
                 crate::parser::AggregateFunction::Min("age".to_string()),
             )],
@@ -2239,6 +2352,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2280,6 +2394,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Aggregate(
                 crate::parser::AggregateFunction::Max("age".to_string()),
             )],
@@ -2289,6 +2404,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2330,6 +2446,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![SelectColumn::Aggregate(
                 crate::parser::AggregateFunction::Count(crate::parser::CountTarget::All),
             )],
@@ -2342,6 +2459,7 @@ mod tests {
             group_by: None,
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2366,6 +2484,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2373,6 +2492,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2380,6 +2500,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
             ],
@@ -2408,6 +2529,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![
                 SelectColumn::Regular("category".to_string()),
                 SelectColumn::Aggregate(crate::parser::AggregateFunction::Count(
@@ -2420,6 +2542,7 @@ mod tests {
             group_by: Some(vec!["category".to_string()]),
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2453,6 +2576,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2460,6 +2584,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2467,6 +2592,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
             ],
@@ -2495,6 +2621,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![
                 SelectColumn::Regular("category".to_string()),
                 SelectColumn::Aggregate(crate::parser::AggregateFunction::Sum(
@@ -2507,6 +2634,7 @@ mod tests {
             group_by: Some(vec!["category".to_string()]),
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2540,6 +2668,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2547,6 +2676,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2554,6 +2684,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
             ],
@@ -2569,6 +2700,7 @@ mod tests {
 
         // Try to select 'price' without including it in GROUP BY
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![
                 SelectColumn::Regular("category".to_string()),
                 SelectColumn::Regular("price".to_string()), // ERROR: not in GROUP BY
@@ -2579,6 +2711,7 @@ mod tests {
             group_by: Some(vec!["category".to_string()]),
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();
@@ -2601,6 +2734,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2608,6 +2742,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -2615,6 +2750,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
+                unique: false,
                     foreign_key: None,
                 },
             ],
@@ -2650,6 +2786,7 @@ mod tests {
         db.create_table(table).unwrap();
 
         let stmt = Statement::Select {
+                distinct: false,
             columns: vec![
                 SelectColumn::Regular("category".to_string()),
                 SelectColumn::Aggregate(crate::parser::AggregateFunction::Count(
@@ -2665,6 +2802,7 @@ mod tests {
             group_by: Some(vec!["category".to_string()]),
             order_by: None,
             limit: None,
+                offset: None,
         };
 
         let tx_manager = TransactionManager::new();

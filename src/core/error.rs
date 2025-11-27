@@ -26,6 +26,8 @@ pub enum DatabaseError {
     PermissionDenied(String),
     #[error("Foreign key constraint violation: {0}")]
     ForeignKeyViolation(String),
+    #[error("UNIQUE constraint violation: {0}")]
+    UniqueViolation(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("JSON Serialization error: {0}")]

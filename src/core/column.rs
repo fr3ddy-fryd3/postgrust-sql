@@ -8,5 +8,6 @@ pub struct Column {
     pub data_type: DataType,
     pub nullable: bool,
     pub primary_key: bool,
+    pub unique: bool,
     pub foreign_key: Option<ForeignKey>,
 }

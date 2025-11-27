@@ -15,6 +15,7 @@ pub enum Statement {
         values: Vec<crate::types::Value>,
     },
     Select {
+        distinct: bool,
         columns: Vec<SelectColumn>,
         from: String,
         joins: Vec<JoinClause>,
@@ -22,6 +23,7 @@ pub enum Statement {
         group_by: Option<Vec<String>>,
         order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
+        offset: Option<usize>,
     },
     Update {
         table: String,
@@ -95,6 +97,7 @@ pub struct ColumnDef {
     pub data_type: DataType,
     pub nullable: bool,
     pub primary_key: bool,
+    pub unique: bool,
     pub foreign_key: Option<crate::types::ForeignKey>,
 }
 
