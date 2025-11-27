@@ -5,13 +5,28 @@ use super::row::Row;
 use super::data_type::DataType;
 use super::error::DatabaseError;
 
+/// Storage backend mode for Table
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageMode {
+    /// In-memory Vec<Row> (default, for backward compatibility)
+    InMemory,
+    /// Page-based storage (new, for better performance)
+    #[allow(dead_code)]
+    PageBased,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
     pub name: String,
     pub columns: Vec<Column>,
+    /// Legacy in-memory storage (still used for serialization)
     pub rows: Vec<Row>,
     /// Sequence counters for SERIAL columns: column_name -> next_value
     pub sequences: HashMap<String, i64>,
+    // Note: PagedTable cannot be stored here because:
+    // 1. Arc<Mutex<PageManager>> is not serializable
+    // 2. PagedTable is managed externally by Database
+    // When using PageBased mode, rows Vec is kept in sync for serialization
 }
 
 impl Table {
