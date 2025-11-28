@@ -17,12 +17,14 @@ mod legacy_executor;
 
 // New modular components
 pub mod storage_adapter;
+pub mod dml;
 
 // Re-export legacy executor for backward compatibility
 pub use legacy_executor::{QueryExecutor, QueryResult};
 
-// Re-exports for convenience
+// Re-export new modular components
 pub use storage_adapter::{RowStorage, LegacyStorage};
+pub use dml::DmlExecutor;
 
 #[cfg(feature = "page_storage")]
 pub use storage_adapter::PagedStorage;
