@@ -3,7 +3,7 @@
 /// INSERT, UPDATE, DELETE using RowStorage abstraction.
 /// This allows seamless operation with both Vec<Row> and PagedTable.
 
-use crate::types::{Database, DatabaseError, Row, Value, Column};
+use crate::types::{Database, DatabaseError, Row, Value, Column, DataType};
 use crate::parser::{Statement, Condition};
 use crate::storage::StorageEngine;
 use crate::transaction::TransactionManager;
@@ -19,8 +19,13 @@ impl DmlExecutor {
     /// This version uses RowStorage trait, allowing it to work with either:
     /// - LegacyStorage (Vec<Row>) - current default
     /// - PagedStorage (PagedTable) - new high-performance backend
+    ///
+    /// Borrow-checker friendly: accepts table parts separately instead of &mut Database
     pub fn insert_with_storage<S: RowStorage>(
-        db: &mut Database,
+        table_columns: &[Column],
+        table_sequences: &std::collections::HashMap<String, i64>,
+        sequences_mut: &mut std::collections::HashMap<String, i64>,
+        all_tables: &std::collections::HashMap<String, crate::types::Table>,
         table_name: &str,
         columns: Option<Vec<String>>,
         values: Vec<Value>,
@@ -28,24 +33,20 @@ impl DmlExecutor {
         storage_engine: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
-        let table = db
-            .get_table(table_name)
-            .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
-
         // Reorder values to match table schema if columns specified
-        let mut ordered_values = Self::reorder_values(&table.columns, columns, values)?;
+        let mut ordered_values = Self::reorder_values(table_columns, columns, values)?;
 
         // Handle SERIAL/BIGSERIAL auto-generation
-        Self::handle_serial_columns(&table.columns, &table.sequences, &mut ordered_values);
+        Self::handle_serial_columns(table_columns, table_sequences, &mut ordered_values);
 
         // Validate types, VARCHAR lengths, CHAR padding, ENUM values
-        Self::validate_and_coerce_types(&table.columns, &mut ordered_values)?;
+        Self::validate_and_coerce_types(table_columns, &mut ordered_values)?;
 
         // Validate foreign key constraints
-        Self::validate_foreign_keys(db, &table.columns, &ordered_values, tx_manager)?;
+        Self::validate_foreign_keys_with_tables(all_tables, table_columns, &ordered_values, tx_manager)?;
 
         // Validate UNIQUE constraints
-        Self::validate_unique_constraints(&table.columns, &ordered_values, storage, tx_manager)?;
+        Self::validate_unique_constraints(table_columns, &ordered_values, storage, tx_manager)?;
 
         // Create row with MVCC
         let current_tx_id = tx_manager.current_tx_id();
@@ -59,9 +60,15 @@ impl DmlExecutor {
         // Insert using RowStorage abstraction
         storage.insert(row)?;
 
-        // Update sequences for SERIAL columns
-        let table = db.get_table_mut(table_name).unwrap();
-        Self::update_serial_sequences(table, &ordered_values);
+        // Update sequences for SERIAL columns (using mutable reference)
+        for (idx, col) in table_columns.iter().enumerate() {
+            if matches!(col.data_type, DataType::Serial | DataType::BigSerial) {
+                if let Value::Integer(val) = ordered_values[idx] {
+                    let current_seq = sequences_mut.get(&col.name).copied().unwrap_or(1);
+                    sequences_mut.insert(col.name.clone(), current_seq.max(val + 1));
+                }
+            }
+        }
 
         Ok(QueryResult::Success("1 row inserted".to_string()))
     }
@@ -166,9 +173,11 @@ impl DmlExecutor {
         Ok(())
     }
 
-    /// Validate foreign key constraints
-    fn validate_foreign_keys(
-        db: &Database,
+    /// Validate foreign key constraints (using HashMap<String, Table>)
+    ///
+    /// Borrow-checker friendly version that accepts all_tables instead of &Database
+    fn validate_foreign_keys_with_tables(
+        all_tables: &std::collections::HashMap<String, crate::types::Table>,
         columns: &[Column],
         values: &[Value],
         tx_manager: &TransactionManager,
@@ -188,8 +197,8 @@ impl DmlExecutor {
                 }
 
                 // Check if value exists in referenced table
-                let ref_table = db
-                    .get_table(&fk.referenced_table)
+                let ref_table = all_tables
+                    .get(&fk.referenced_table)
                     .ok_or_else(|| DatabaseError::ForeignKeyViolation(
                         format!("Referenced table '{}' does not exist", fk.referenced_table)
                     ))?;
@@ -213,6 +222,17 @@ impl DmlExecutor {
             }
         }
         Ok(())
+    }
+
+    /// Validate foreign key constraints (legacy version using &Database)
+    #[allow(dead_code)]
+    fn validate_foreign_keys(
+        db: &Database,
+        columns: &[Column],
+        values: &[Value],
+        tx_manager: &TransactionManager,
+    ) -> Result<(), DatabaseError> {
+        Self::validate_foreign_keys_with_tables(&db.tables, columns, values, tx_manager)
     }
 
     /// Validate UNIQUE constraints using RowStorage
