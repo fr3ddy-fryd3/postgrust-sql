@@ -18,6 +18,7 @@ mod legacy_executor;
 // New modular components
 pub mod storage_adapter;
 pub mod dml;
+pub mod conditions;
 
 // Re-export legacy executor for backward compatibility
 pub use legacy_executor::{QueryExecutor, QueryResult};
@@ -25,6 +26,7 @@ pub use legacy_executor::{QueryExecutor, QueryResult};
 // Re-export new modular components
 pub use storage_adapter::{RowStorage, LegacyStorage};
 pub use dml::DmlExecutor;
+pub use conditions::ConditionEvaluator;
 
 #[cfg(feature = "page_storage")]
 pub use storage_adapter::PagedStorage;

@@ -9,6 +9,7 @@ use crate::storage::StorageEngine;
 use crate::transaction::TransactionManager;
 use super::storage_adapter::{RowStorage, LegacyStorage};
 use super::legacy_executor::QueryResult;
+use super::conditions::ConditionEvaluator;
 
 pub struct DmlExecutor;
 
@@ -297,9 +298,7 @@ impl DmlExecutor {
         // Define predicate and updater closures
         let predicate = |row: &Row| -> bool {
             if let Some(ref cond) = filter {
-                // TODO: Need evaluate_condition_with_columns here
-                // For now, simplified version
-                true
+                ConditionEvaluator::evaluate_with_columns(table_columns, row, cond).unwrap_or(false)
             } else {
                 true
             }
@@ -346,9 +345,7 @@ impl DmlExecutor {
             }
 
             if let Some(ref cond) = filter {
-                // TODO: Need evaluate_condition_with_columns here
-                // For now, simplified version
-                true
+                ConditionEvaluator::evaluate_with_columns(table_columns, row, cond).unwrap_or(false)
             } else {
                 true
             }
@@ -394,8 +391,22 @@ mod tests {
     #[test]
     fn test_reorder_values() {
         let columns = vec![
-            Column::new("id".to_string(), DataType::Integer, false),
-            Column::new("name".to_string(), DataType::Text, false),
+            Column {
+                name: "id".to_string(),
+                data_type: DataType::Integer,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+            Column {
+                name: "name".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
         ];
 
         let result = DmlExecutor::reorder_values(
@@ -411,8 +422,22 @@ mod tests {
     #[test]
     fn test_handle_serial_columns() {
         let columns = vec![
-            Column::new("id".to_string(), DataType::Serial, false),
-            Column::new("name".to_string(), DataType::Text, false),
+            Column {
+                name: "id".to_string(),
+                data_type: DataType::Serial,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+            Column {
+                name: "name".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
         ];
 
         let mut sequences = std::collections::HashMap::new();
