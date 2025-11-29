@@ -39,6 +39,8 @@ pub struct Server {
     instance: Arc<Mutex<ServerInstance>>,
     storage: Arc<Mutex<StorageEngine>>,
     tx_manager: TransactionManager,
+    #[cfg(feature = "page_storage")]
+    database_storage: Arc<Mutex<crate::storage::DatabaseStorage>>,
 }
 
 impl Server {
@@ -96,10 +98,19 @@ impl Server {
 
         let tx_manager = TransactionManager::new();
 
+        #[cfg(feature = "page_storage")]
+        let database_storage = {
+            const BUFFER_POOL_SIZE: usize = 1000;  // 1000 pages * 8KB = 8MB cache
+            let db_storage = crate::storage::DatabaseStorage::new(data_dir, BUFFER_POOL_SIZE)?;
+            Arc::new(Mutex::new(db_storage))
+        };
+
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
             storage: Arc::new(Mutex::new(storage)),
             tx_manager,
+            #[cfg(feature = "page_storage")]
+            database_storage,
         })
     }
 
