@@ -20,6 +20,7 @@ pub mod storage_adapter;
 pub mod conditions;
 pub mod dml;
 pub mod ddl;
+pub mod queries;
 
 // Re-export legacy executor for backward compatibility
 pub use legacy_executor::{QueryExecutor, QueryResult};
@@ -29,6 +30,7 @@ pub use storage_adapter::{RowStorage, LegacyStorage};
 pub use conditions::ConditionEvaluator;
 pub use dml::DmlExecutor;
 pub use ddl::DdlExecutor;
+pub use queries::QueryExecutor as QueriesExecutor;
 
 #[cfg(feature = "page_storage")]
 pub use storage_adapter::PagedStorage;
