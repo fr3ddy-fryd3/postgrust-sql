@@ -5,6 +5,12 @@ use crate::storage::StorageEngine;
 use crate::transaction::TransactionManager;
 use crate::types::{Column, Database, DatabaseError, DataType, Row, Table, Value};
 
+// Import new modular executors
+use super::ddl::DdlExecutor;
+use super::dml::DmlExecutor;
+use super::queries::QueryExecutor as QueriesExecutor;
+use super::storage_adapter::LegacyStorage;
+
 pub struct QueryExecutor;
 
 #[derive(Debug)]
@@ -22,18 +28,31 @@ impl QueryExecutor {
         tx_manager: &TransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         match stmt {
+            // DDL operations - delegate to DdlExecutor
             Statement::CreateTable { name, columns } => {
-                Self::create_table(db, name, columns, storage)
+                DdlExecutor::create_table(db, name, columns, storage)
             }
-            Statement::DropTable { name } => Self::drop_table(db, name, storage),
+            Statement::DropTable { name } => DdlExecutor::drop_table(db, name, storage),
             Statement::AlterTable { name, operation } => {
-                Self::alter_table(db, name, operation, storage)
+                DdlExecutor::alter_table(db, name, operation, storage)
             }
+            Statement::ShowTables => DdlExecutor::show_tables(db),
+
+            // DML operations - TODO: delegate to DmlExecutor (borrow checker issues)
+            // For now, keeping legacy implementations
             Statement::Insert {
                 table,
                 columns,
                 values,
             } => Self::insert(db, table, columns, values, storage, tx_manager),
+            Statement::Update {
+                table,
+                assignments,
+                filter,
+            } => Self::update(db, table, assignments, filter, storage, tx_manager),
+            Statement::Delete { from, filter } => Self::delete(db, from, filter, storage, tx_manager),
+
+            // Query operations - delegate to QueriesExecutor
             Statement::Select {
                 distinct,
                 columns,
@@ -44,14 +63,7 @@ impl QueryExecutor {
                 order_by,
                 limit,
                 offset,
-            } => Self::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager),
-            Statement::Update {
-                table,
-                assignments,
-                filter,
-            } => Self::update(db, table, assignments, filter, storage, tx_manager),
-            Statement::Delete { from, filter } => Self::delete(db, from, filter, storage, tx_manager),
-            Statement::ShowTables => Self::show_tables(db),
+            } => QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager),
             Statement::Begin | Statement::Commit | Statement::Rollback => {
                 // Transaction commands should be handled at the server level
                 Err(DatabaseError::ParseError(
