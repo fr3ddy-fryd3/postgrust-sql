@@ -41,12 +41,12 @@ impl Row {
     /// A row is dead if:
     /// 1. It has been deleted/updated (xmax is set)
     /// 2. The deletion is committed and invisible to all active transactions
-    ///    (xmax < oldest_active_tx)
+    ///    (xmax <= oldest_active_tx)
     ///
     /// This ensures we only vacuum tuples that no transaction can see.
     pub fn is_dead(&self, oldest_active_tx: u64) -> bool {
         match self.xmax {
-            Some(xmax) => xmax < oldest_active_tx,
+            Some(xmax) => xmax <= oldest_active_tx,
             None => false, // Row is still alive
         }
     }
@@ -87,9 +87,10 @@ mod tests {
             xmax: Some(150),
         };
 
-        // Dead if xmax < oldest_active_tx
+        // Dead if xmax <= oldest_active_tx
         assert!(row.is_dead(200));  // Deleted at 150, oldest tx is 200
         assert!(row.is_dead(151));  // Deleted at 150, oldest tx is 151
+        assert!(row.is_dead(150));  // Deleted at 150, oldest tx is 150 (edge case)
     }
 
     #[test]
@@ -101,7 +102,7 @@ mod tests {
         };
 
         // Not dead if some transaction can still see it
-        assert!(!row.is_dead(150)); // Transaction 150 can see pre-delete version
+        assert!(!row.is_dead(149)); // Transaction 149 can see it (started before delete)
         assert!(!row.is_dead(140)); // Transaction 140 can see it
         assert!(!row.is_dead(100)); // Transaction 100 can see it
     }

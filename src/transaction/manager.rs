@@ -31,12 +31,16 @@ impl TransactionManager {
     /// Gets the oldest transaction ID that could still see data
     /// Used by VACUUM to determine safe cleanup horizon
     ///
-    /// Note: Simplified implementation for v1.5.1
-    /// Returns current_tx_id since we don't track active transactions yet.
-    /// This is conservative (safe) but may leave some reclaimable dead tuples.
+    /// Simplified implementation for v1.6.0:
+    /// Returns current_tx_id - 1, assuming all previous transactions are committed.
+    /// This works for single-connection scenarios but isn't safe for concurrent transactions.
+    ///
+    /// TODO v1.7: Track active transactions with HashSet<u64> for proper multi-connection support
     pub fn get_oldest_active_tx(&self) -> u64 {
-        // TODO v1.6: Track active transactions for more aggressive cleanup
-        self.current_tx_id()
+        let current = self.current_tx_id();
+        // Assume all transactions before current are committed
+        // Safe for testing, but needs proper tracking for production
+        current.saturating_sub(1).max(1)
     }
 }
 
