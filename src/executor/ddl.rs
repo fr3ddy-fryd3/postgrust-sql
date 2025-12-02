@@ -20,6 +20,7 @@ impl DdlExecutor {
         name: String,
         column_defs: Vec<ColumnDef>,
         storage: Option<&mut StorageEngine>,
+        database_storage: Option<&mut crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         // Build columns from column definitions
         let columns: Vec<Column> = column_defs
@@ -79,18 +80,30 @@ impl DdlExecutor {
             }
         }
 
+        // Create table with columns (metadata always in Database)
         let table = Table::new(name.clone(), columns);
 
-        // Log to WAL before executing
-        if let Some(storage) = storage {
-            storage.log_create_table(&table)?;
-        }
+        if let Some(db_storage) = database_storage {
+            // Page-based storage: create PagedTable for data
+            db_storage.create_table(name.clone())?;
+            db.create_table(table)?;
+            Ok(QueryResult::Success(format!(
+                "Table '{}' created successfully (page-based storage)",
+                name
+            )))
+        } else {
+            // Legacy storage: use Vec<Row> embedded in Table
+            // Log to WAL before executing
+            if let Some(storage) = storage {
+                storage.log_create_table(&table)?;
+            }
 
-        db.create_table(table)?;
-        Ok(QueryResult::Success(format!(
-            "Table '{}' created successfully",
-            name
-        )))
+            db.create_table(table)?;
+            Ok(QueryResult::Success(format!(
+                "Table '{}' created successfully",
+                name
+            )))
+        }
     }
 
     /// Execute DROP TABLE statement

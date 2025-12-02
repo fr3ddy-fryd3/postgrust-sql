@@ -39,8 +39,7 @@ pub struct Server {
     instance: Arc<Mutex<ServerInstance>>,
     storage: Arc<Mutex<StorageEngine>>,
     tx_manager: TransactionManager,
-    #[cfg(feature = "page_storage")]
-    database_storage: Arc<Mutex<crate::storage::DatabaseStorage>>,
+    database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
 }
 
 impl Server {
@@ -98,18 +97,32 @@ impl Server {
 
         let tx_manager = TransactionManager::new();
 
-        #[cfg(feature = "page_storage")]
-        let database_storage = {
+        // Check if page-based storage should be used (runtime selection via env var)
+        let use_page_storage = std::env::var("RUSTDB_USE_PAGE_STORAGE")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        let database_storage = if use_page_storage {
             const BUFFER_POOL_SIZE: usize = 1000;  // 1000 pages * 8KB = 8MB cache
-            let db_storage = crate::storage::DatabaseStorage::new(data_dir, BUFFER_POOL_SIZE)?;
-            Arc::new(Mutex::new(db_storage))
+            match crate::storage::DatabaseStorage::new(data_dir, BUFFER_POOL_SIZE) {
+                Ok(db_storage) => {
+                    println!("✓ Page-based storage enabled (8MB buffer pool)");
+                    Some(Arc::new(Mutex::new(db_storage)))
+                }
+                Err(e) => {
+                    eprintln!("✗ Failed to initialize page storage: {}", e);
+                    eprintln!("  Falling back to legacy Vec<Row> storage");
+                    None
+                }
+            }
+        } else {
+            None
         };
 
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
             storage: Arc::new(Mutex::new(storage)),
             tx_manager,
-            #[cfg(feature = "page_storage")]
             database_storage,
         })
     }
@@ -131,9 +144,10 @@ impl Server {
             let instance = Arc::clone(&self.instance);
             let storage = Arc::clone(&self.storage);
             let tx_manager = self.tx_manager.clone();
+            let database_storage = self.database_storage.as_ref().map(Arc::clone);
 
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_client_auto(socket, instance, storage, tx_manager).await {
+                if let Err(e) = Self::handle_client_auto(socket, instance, storage, tx_manager, database_storage).await {
                     eprintln!("✗ Error handling client {}: {}", addr, e);
                 }
             });
@@ -145,6 +159,7 @@ impl Server {
         instance: Arc<Mutex<ServerInstance>>,
         storage: Arc<Mutex<StorageEngine>>,
         tx_manager: TransactionManager,
+        database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Peek at the first 8 bytes to determine protocol
         let mut peek_buf = [0u8; 8];
@@ -161,9 +176,9 @@ impl Server {
         // If length is reasonable (< 10000) and code matches PostgreSQL protocol or SSL request
         if length > 0 && length < 10000 &&
            (code == pg_protocol::PROTOCOL_VERSION || code == pg_protocol::SSL_REQUEST_CODE) {
-            Self::handle_postgres_client(socket, instance, storage, tx_manager).await
+            Self::handle_postgres_client(socket, instance, storage, tx_manager, database_storage).await
         } else {
-            Self::handle_text_client(socket, instance, storage, tx_manager).await
+            Self::handle_text_client(socket, instance, storage, tx_manager, database_storage).await
         }
     }
 
@@ -172,6 +187,7 @@ impl Server {
         instance: Arc<Mutex<ServerInstance>>,
         storage: Arc<Mutex<StorageEngine>>,
         tx_manager: TransactionManager,
+        database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (mut reader, mut writer) = socket.into_split();
 
@@ -518,7 +534,15 @@ impl Server {
                                                 None
                                             };
 
-                                            match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager) {
+                                            // Get database_storage if available
+                                            let mut db_storage_guard = if let Some(ref db_storage) = database_storage {
+                                                Some(db_storage.lock().await)
+                                            } else {
+                                                None
+                                            };
+                                            let db_storage_option = db_storage_guard.as_deref_mut();
+
+                                            match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, db_storage_option) {
                                                 Ok(result) => {
                                                     if !transaction.is_active() {
                                                         if let Err(e) = storage_guard.save_server_instance(&inst) {
@@ -607,6 +631,7 @@ impl Server {
         instance: Arc<Mutex<ServerInstance>>,
         storage: Arc<Mutex<StorageEngine>>,
         tx_manager: TransactionManager,
+        database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (reader, mut writer) = socket.split();
         let mut reader = BufReader::new(reader);
@@ -700,7 +725,15 @@ impl Server {
                                     None
                                 };
 
-                                match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager) {
+                                // Get database_storage if available
+                                let mut db_storage_guard = if let Some(ref db_storage) = database_storage {
+                                    Some(db_storage.lock().await)
+                                } else {
+                                    None
+                                };
+                                let db_storage_option = db_storage_guard.as_deref_mut();
+
+                                match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, db_storage_option) {
                                     Ok(result) => {
                                         // Checkpoint if needed (only if not in transaction)
                                         if !transaction.is_active() {

@@ -93,19 +93,16 @@ impl<'a> RowStorage for LegacyStorage<'a> {
 ///
 /// High-performance storage with 8KB pages, LRU cache, and dirty tracking.
 /// Provides 1,250,000x better write amplification vs legacy storage.
-#[cfg(feature = "page_storage")]
 pub struct PagedStorage<'a> {
     paged_table: &'a mut crate::storage::PagedTable,
 }
 
-#[cfg(feature = "page_storage")]
 impl<'a> PagedStorage<'a> {
     pub fn new(paged_table: &'a mut crate::storage::PagedTable) -> Self {
         Self { paged_table }
     }
 }
 
-#[cfg(feature = "page_storage")]
 impl<'a> RowStorage for PagedStorage<'a> {
     fn insert(&mut self, row: Row) -> Result<(), DatabaseError> {
         self.paged_table.insert(row)

@@ -30,10 +30,11 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
+        database_storage: Option<&crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         // Check if this is a JOIN query
         if !joins.is_empty() {
-            return Self::select_with_join(db, distinct, columns, from, joins, filter, order_by, limit, offset, tx_manager);
+            return Self::select_with_join(db, distinct, columns, from, joins, filter, order_by, limit, offset, tx_manager, database_storage);
         }
 
         // Check if this is an aggregate query
@@ -42,11 +43,11 @@ impl QueryExecutor {
             .any(|col| matches!(col, SelectColumn::Aggregate(_)));
 
         if group_by.is_some() {
-            Self::select_with_group_by(db, distinct, columns, from, filter, group_by.unwrap(), order_by, limit, offset, tx_manager)
+            Self::select_with_group_by(db, distinct, columns, from, filter, group_by.unwrap(), order_by, limit, offset, tx_manager, database_storage)
         } else if has_aggregates {
-            Self::select_aggregate(db, distinct, columns, from, filter, tx_manager)
+            Self::select_aggregate(db, distinct, columns, from, filter, tx_manager, database_storage)
         } else {
-            Self::select_regular(db, distinct, columns, from, filter, order_by, limit, offset, tx_manager)
+            Self::select_regular(db, distinct, columns, from, filter, order_by, limit, offset, tx_manager, database_storage)
         }
     }
 
@@ -69,6 +70,7 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
+        database_storage: Option<&crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db
             .get_table(&from)
@@ -108,10 +110,27 @@ impl QueryExecutor {
         // Get current transaction ID for visibility checks (MVCC)
         let current_tx_id = tx_manager.current_tx_id();
 
-        // Collect rows with their original indices (for sorting)
-        let mut rows_with_data: Vec<(&Row, Vec<String>)> = Vec::new();
+        // Get rows from appropriate storage backend
+        let rows_vec: Vec<Row>;
+        let rows_iter: Box<dyn Iterator<Item = &Row>>;
 
-        for row in &table.rows {
+        if let Some(db_storage) = database_storage {
+            // Page-based storage: read from PagedTable
+            if let Some(paged_table) = db_storage.get_paged_table(&from) {
+                rows_vec = paged_table.get_all_rows()?;
+                rows_iter = Box::new(rows_vec.iter());
+            } else {
+                return Err(DatabaseError::TableNotFound(from.clone()));
+            }
+        } else {
+            // Legacy storage: read from table.rows
+            rows_iter = Box::new(table.rows.iter());
+        }
+
+        // Collect rows with their original indices (for sorting)
+        let mut rows_with_data: Vec<(Row, Vec<String>)> = Vec::new();
+
+        for row in rows_iter {
             // MVCC: Check row visibility
             if !row.is_visible(current_tx_id) {
                 continue;
@@ -127,7 +146,7 @@ impl QueryExecutor {
                 .iter()
                 .map(|&idx| row.values[idx].to_string())
                 .collect();
-            rows_with_data.push((row, result_row));
+            rows_with_data.push((row.clone(), result_row));
         }
 
         // Apply ORDER BY if specified
@@ -202,6 +221,7 @@ impl QueryExecutor {
         from: String,
         filter: Option<Condition>,
         tx_manager: &TransactionManager,
+        _database_storage: Option<&crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db
             .get_table(&from)
@@ -410,6 +430,7 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
+        _database_storage: Option<&crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         use std::collections::HashMap;
 
@@ -560,6 +581,7 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
+        _database_storage: Option<&crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         use crate::parser::JoinType;
 

@@ -9,7 +9,7 @@ use crate::types::{Column, Database, DatabaseError, DataType, Row, Table, Value}
 use super::ddl::DdlExecutor;
 use super::dml::DmlExecutor;
 use super::queries::QueryExecutor as QueriesExecutor;
-use super::storage_adapter::LegacyStorage;
+use super::storage_adapter::{LegacyStorage, PagedStorage};
 
 pub struct QueryExecutor;
 
@@ -26,11 +26,12 @@ impl QueryExecutor {
         stmt: Statement,
         storage: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
+        database_storage: Option<&mut crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         match stmt {
             // DDL operations - delegate to DdlExecutor
             Statement::CreateTable { name, columns } => {
-                DdlExecutor::create_table(db, name, columns, storage)
+                DdlExecutor::create_table(db, name, columns, storage, database_storage)
             }
             Statement::DropTable { name } => DdlExecutor::drop_table(db, name, storage),
             Statement::AlterTable { name, operation } => {
@@ -51,47 +52,102 @@ impl QueryExecutor {
                 let table_sequences = table_ref.sequences.clone();
                 let all_tables = db.tables.clone();  // Clone to avoid borrow conflict
 
-                // Get mutable references
-                let table_mut = db.get_table_mut(&table).unwrap();
-                let mut storage_adapter = LegacyStorage::new(&mut table_mut.rows);
-                let sequences_mut = &mut table_mut.sequences;
+                if let Some(db_storage) = database_storage {
+                    // Page-based storage: use PagedStorage
+                    let paged_table = db_storage.get_paged_table_mut(&table)
+                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
+                    let mut storage_adapter = PagedStorage::new(paged_table);
 
-                DmlExecutor::insert_with_storage(
-                    &table_columns,
-                    &table_sequences,
-                    sequences_mut,
-                    &all_tables,
-                    &table,
-                    columns,
-                    values,
-                    &mut storage_adapter,
-                    storage,
-                    tx_manager,
-                )
+                    let table_mut = db.get_table_mut(&table).unwrap();
+                    let sequences_mut = &mut table_mut.sequences;
+
+                    DmlExecutor::insert_with_storage(
+                        &table_columns,
+                        &table_sequences,
+                        sequences_mut,
+                        &all_tables,
+                        &table,
+                        columns,
+                        values,
+                        &mut storage_adapter,
+                        storage,
+                        tx_manager,
+                    )
+                } else {
+                    // Legacy storage: use Vec<Row>
+                    let table_mut = db.get_table_mut(&table).unwrap();
+                    let mut storage_adapter = LegacyStorage::new(&mut table_mut.rows);
+                    let sequences_mut = &mut table_mut.sequences;
+
+                    DmlExecutor::insert_with_storage(
+                        &table_columns,
+                        &table_sequences,
+                        sequences_mut,
+                        &all_tables,
+                        &table,
+                        columns,
+                        values,
+                        &mut storage_adapter,
+                        storage,
+                        tx_manager,
+                    )
+                }
             }
             Statement::Update {
                 table,
                 assignments,
                 filter,
             } => {
-                let table_ref = db.get_table_mut(&table)
-                    .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
-                let table_columns = table_ref.columns.clone();
-                let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
+                if let Some(db_storage) = database_storage {
+                    // Page-based storage: use PagedStorage
+                    let table_ref = db.get_table(&table)
+                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
+                    let table_columns = table_ref.columns.clone();
 
-                DmlExecutor::update_with_storage(
-                    &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table
-                )
+                    let paged_table = db_storage.get_paged_table_mut(&table)
+                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
+                    let mut storage_adapter = PagedStorage::new(paged_table);
+
+                    DmlExecutor::update_with_storage(
+                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table
+                    )
+                } else {
+                    // Legacy storage: use Vec<Row>
+                    let table_ref = db.get_table_mut(&table)
+                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
+                    let table_columns = table_ref.columns.clone();
+                    let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
+
+                    DmlExecutor::update_with_storage(
+                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table
+                    )
+                }
             }
             Statement::Delete { from, filter } => {
-                let table_ref = db.get_table_mut(&from)
-                    .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
-                let table_columns = table_ref.columns.clone();
-                let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
+                if let Some(db_storage) = database_storage {
+                    // Page-based storage: use PagedStorage
+                    let table_ref = db.get_table(&from)
+                        .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+                    let table_columns = table_ref.columns.clone();
 
-                DmlExecutor::delete_with_storage(
-                    &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from
-                )
+                    let paged_table = db_storage.get_paged_table_mut(&from)
+                        .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+                    let mut storage_adapter = PagedStorage::new(paged_table);
+
+                    DmlExecutor::delete_with_storage(
+                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from
+                    )
+                } else {
+                    // Legacy storage: use Vec<Row>
+                    let table_ref = db.get_table_mut(&from)
+                        .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+                    let table_columns = table_ref.columns.clone();
+                    let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
+
+                    DmlExecutor::delete_with_storage(
+                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from
+                    )
+                }
             }
 
             // Query operations - delegate to QueriesExecutor
@@ -105,7 +161,11 @@ impl QueryExecutor {
                 order_by,
                 limit,
                 offset,
-            } => QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager),
+            } => {
+                // Convert &mut DatabaseStorage to &DatabaseStorage for read-only SELECT
+                let db_storage_ref = database_storage.as_deref();
+                QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, db_storage_ref)
+            }
             Statement::Begin | Statement::Commit | Statement::Rollback => {
                 // Transaction commands should be handled at the server level
                 Err(DatabaseError::ParseError(
@@ -209,7 +269,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
         assert!(db.get_table("users").is_some());
     }
@@ -225,7 +285,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
         assert!(db.get_table("users").is_none());
     }
@@ -247,7 +307,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         let table = db.get_table("users").unwrap();
@@ -271,7 +331,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         let table = db.get_table("users").unwrap();
@@ -311,7 +371,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(rows.len(), 2);
@@ -357,7 +417,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -393,7 +453,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns.len(), 2);
@@ -444,7 +504,7 @@ mod tests {
             )),
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -463,7 +523,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -506,7 +566,7 @@ mod tests {
             filter: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -522,7 +582,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2);
@@ -568,7 +628,7 @@ mod tests {
             )),
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -584,7 +644,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -626,7 +686,7 @@ mod tests {
             filter: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -642,7 +702,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 0);
@@ -680,7 +740,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -725,7 +785,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -784,7 +844,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -843,7 +903,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2);
@@ -892,7 +952,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 3);
@@ -944,7 +1004,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 3);
@@ -996,7 +1056,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2); // Only first 2 rows
@@ -1045,7 +1105,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2);
@@ -1098,7 +1158,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1150,7 +1210,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1202,7 +1262,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1254,7 +1314,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1306,7 +1366,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1361,7 +1421,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1444,7 +1504,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns, vec!["category", "count"]);
@@ -1536,7 +1596,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns, vec!["category", "sum(price)"]);
@@ -1613,7 +1673,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager);
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1704,7 +1764,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1); // Only Electronics has items > 25
