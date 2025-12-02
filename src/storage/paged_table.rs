@@ -133,43 +133,46 @@ impl PagedTable {
         Ok(deleted_count)
     }
 
-    /// Update rows matching a predicate
-    pub fn update_where<F, U>(&mut self, predicate: F, updater: U) -> Result<usize, DatabaseError>
+    /// Update rows matching predicate (MVCC-aware: marks old + inserts new versions)
+    pub fn update_where<F, U>(&mut self, predicate: F, updater: U, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
         U: Fn(&Row) -> Row,
     {
+        let pm = self.page_manager.lock().unwrap();
+        let mut new_rows = Vec::new();
         let mut updated_count = 0;
 
-        let pm = self.page_manager.lock().unwrap();
-
+        // Phase 1: Mark old rows and collect new versions
         for page_num in 0..self.page_count {
             let page_id = PageId::new(self.table_id, page_num);
             let guard = pm.get_page_mut(page_id)?;
 
-            let count = guard.get_mut(|page| {
-                let mut local_count = 0;
+            guard.get_mut(|page| {
                 for slot_idx in 0..page.slots.len() {
-                    if let Ok(row) = page.get_row(slot_idx as u16) {
+                    if let Ok(mut row) = page.get_row(slot_idx as u16) {
                         if predicate(&row) {
-                            let new_row = updater(&row);
-                            // Try to update in place
-                            if page.update_row(slot_idx as u16, &new_row)? {
-                                local_count += 1;
-                            } else {
-                                // Doesn't fit - delete old and insert new
-                                page.delete_row(slot_idx as u16)?;
-                                // Note: We'll need to insert into a different page
-                                // For now, just mark as updated
-                                local_count += 1;
-                            }
+                            // Mark old version as deleted
+                            row.mark_deleted(tx_id);
+                            page.update_row(slot_idx as u16, &row)?;
+
+                            // Create new version
+                            let mut new_row = updater(&row);
+                            new_row.xmin = tx_id;
+                            new_row.xmax = None;
+                            new_rows.push(new_row);
+                            updated_count += 1;
                         }
                     }
                 }
-                Ok(local_count)
+                Ok(())
             })?;
+        }
 
-            updated_count += count;
+        // Phase 2: Insert new versions (drop lock first to avoid deadlock)
+        drop(pm);
+        for new_row in new_rows {
+            self.insert(new_row)?;
         }
 
         Ok(updated_count)
@@ -279,7 +282,8 @@ mod tests {
         // Update all rows
         let updated = table.update_where(
             |_| true,
-            |row| Row::new(vec![row.values[0].clone(), Value::Text("new".to_string())])
+            |row| Row::new(vec![row.values[0].clone(), Value::Text("new".to_string())]),
+            100 // tx_id
         ).unwrap();
 
         assert_eq!(updated, 5);

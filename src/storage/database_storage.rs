@@ -88,15 +88,15 @@ impl DatabaseStorage {
         paged_table.delete_where(predicate, tx_id)
     }
 
-    /// Update rows matching predicate
-    pub fn update_where<F, U>(&mut self, table_name: &str, predicate: F, updater: U) -> Result<usize, DatabaseError>
+    /// Update rows matching predicate (MVCC-aware)
+    pub fn update_where<F, U>(&mut self, table_name: &str, predicate: F, updater: U, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
         U: Fn(&Row) -> Row,
     {
         let paged_table = self.get_paged_table_mut(table_name)
             .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
-        paged_table.update_where(predicate, updater)
+        paged_table.update_where(predicate, updater, tx_id)
     }
 
     /// Flush all dirty pages to disk (checkpoint)
@@ -201,7 +201,8 @@ mod tests {
         let updated = storage.update_where(
             "users",
             |_| true,
-            |row| Row::new(vec![row.values[0].clone(), Value::Text("new".to_string())])
+            |row| Row::new(vec![row.values[0].clone(), Value::Text("new".to_string())]),
+            100 // tx_id
         ).unwrap();
 
         assert_eq!(updated, 5);

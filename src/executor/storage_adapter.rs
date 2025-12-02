@@ -17,8 +17,8 @@ pub trait RowStorage {
     /// Get all rows from storage (for SELECT)
     fn get_all(&self) -> Result<Vec<Row>, DatabaseError>;
 
-    /// Update rows matching predicate
-    fn update_where<F, U>(&mut self, predicate: F, updater: U) -> Result<usize, DatabaseError>
+    /// Update rows matching predicate (MVCC-aware: marks old + inserts new version)
+    fn update_where<F, U>(&mut self, predicate: F, updater: U, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
         U: Fn(&Row) -> Row;
@@ -60,18 +60,30 @@ impl<'a> RowStorage for LegacyStorage<'a> {
         Ok(self.rows.clone())
     }
 
-    fn update_where<F, U>(&mut self, predicate: F, updater: U) -> Result<usize, DatabaseError>
+    fn update_where<F, U>(&mut self, predicate: F, updater: U, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
         U: Fn(&Row) -> Row,
     {
+        // MVCC-aware update: mark old rows + insert new versions
+        let mut new_rows = Vec::new();
         let mut updated = 0;
+
         for row in self.rows.iter_mut() {
             if predicate(row) {
-                *row = updater(row);
+                // Mark old version as deleted
+                row.mark_deleted(tx_id);
+                // Create new version
+                let mut new_row = updater(row);
+                new_row.xmin = tx_id;
+                new_row.xmax = None;
+                new_rows.push(new_row);
                 updated += 1;
             }
         }
+
+        // Append new versions
+        self.rows.extend(new_rows);
         Ok(updated)
     }
 
@@ -118,12 +130,12 @@ impl<'a> RowStorage for PagedStorage<'a> {
         self.paged_table.get_all_rows()
     }
 
-    fn update_where<F, U>(&mut self, predicate: F, updater: U) -> Result<usize, DatabaseError>
+    fn update_where<F, U>(&mut self, predicate: F, updater: U, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
         U: Fn(&Row) -> Row,
     {
-        self.paged_table.update_where(predicate, updater)
+        self.paged_table.update_where(predicate, updater, tx_id)
     }
 
     fn delete_where<F>(&mut self, predicate: F, tx_id: u64) -> Result<usize, DatabaseError>
@@ -181,11 +193,13 @@ mod tests {
 
         let updated = storage.update_where(
             |row| matches!(row.values[0], Value::Integer(x) if x > 1),
-            |_| Row::new(vec![Value::Integer(99)])
+            |_| Row::new(vec![Value::Integer(99)]),
+            100 // tx_id
         ).unwrap();
 
         assert_eq!(updated, 2);
-        assert_eq!(storage.count(), 3);
+        // MVCC: old rows marked + new rows added
+        assert_eq!(storage.count(), 5); // 3 original + 2 new versions
     }
 
     #[test]

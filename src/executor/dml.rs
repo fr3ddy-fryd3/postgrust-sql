@@ -332,8 +332,8 @@ impl DmlExecutor {
             Row::new_with_xmin(new_values, current_tx_id)
         };
 
-        // Execute update
-        let updated_count = storage.update_where(predicate, updater)?;
+        // Execute update (MVCC: mark old + insert new versions)
+        let updated_count = storage.update_where(predicate, updater, current_tx_id)?;
 
         // TODO: WAL logging
         if let Some(_se) = storage_engine {
