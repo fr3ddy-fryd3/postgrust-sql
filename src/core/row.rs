@@ -50,6 +50,15 @@ impl Row {
             None => false, // Row is still alive
         }
     }
+
+    /// Mark this row as deleted by setting xmax (MVCC soft delete)
+    ///
+    /// Instead of physically removing the row, we mark it with the transaction ID
+    /// that deleted it. This allows other transactions to still see the row if needed,
+    /// and VACUUM will physically remove it later when safe.
+    pub fn mark_deleted(&mut self, tx_id: u64) {
+        self.xmax = Some(tx_id);
+    }
 }
 
 #[cfg(test)]

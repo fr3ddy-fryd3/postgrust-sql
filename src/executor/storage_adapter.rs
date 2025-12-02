@@ -23,8 +23,8 @@ pub trait RowStorage {
         F: Fn(&Row) -> bool,
         U: Fn(&Row) -> Row;
 
-    /// Delete rows matching predicate
-    fn delete_where<F>(&mut self, predicate: F) -> Result<usize, DatabaseError>
+    /// Delete rows matching predicate (MVCC-aware: marks with xmax instead of physical removal)
+    fn delete_where<F>(&mut self, predicate: F, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool;
 
@@ -75,13 +75,19 @@ impl<'a> RowStorage for LegacyStorage<'a> {
         Ok(updated)
     }
 
-    fn delete_where<F>(&mut self, predicate: F) -> Result<usize, DatabaseError>
+    fn delete_where<F>(&mut self, predicate: F, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
     {
-        let initial_len = self.rows.len();
-        self.rows.retain(|row| !predicate(row));
-        Ok(initial_len - self.rows.len())
+        // MVCC-aware delete: mark rows with xmax instead of physical removal
+        let mut deleted = 0;
+        for row in self.rows.iter_mut() {
+            if predicate(row) {
+                row.mark_deleted(tx_id);
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
     }
 
     fn count(&self) -> usize {
@@ -120,11 +126,11 @@ impl<'a> RowStorage for PagedStorage<'a> {
         self.paged_table.update_where(predicate, updater)
     }
 
-    fn delete_where<F>(&mut self, predicate: F) -> Result<usize, DatabaseError>
+    fn delete_where<F>(&mut self, predicate: F, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
     {
-        self.paged_table.delete_where(predicate)
+        self.paged_table.delete_where(predicate, tx_id)
     }
 
     fn count(&self) -> usize {
@@ -192,10 +198,12 @@ mod tests {
         let mut storage = LegacyStorage::new(&mut rows);
 
         let deleted = storage.delete_where(
-            |row| matches!(row.values[0], Value::Integer(x) if x > 1)
+            |row| matches!(row.values[0], Value::Integer(x) if x > 1),
+            100 // tx_id
         ).unwrap();
 
         assert_eq!(deleted, 2);
-        assert_eq!(storage.count(), 1);
+        // MVCC: rows are marked as deleted, not physically removed
+        assert_eq!(storage.count(), 3); // All 3 rows still in storage
     }
 }

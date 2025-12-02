@@ -97,8 +97,8 @@ impl PagedTable {
         self.row_count
     }
 
-    /// Delete all rows matching a predicate
-    pub fn delete_where<F>(&mut self, predicate: F) -> Result<usize, DatabaseError>
+    /// Delete rows matching predicate (MVCC-aware: marks with xmax instead of physical removal)
+    pub fn delete_where<F>(&mut self, predicate: F, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
     {
@@ -113,9 +113,11 @@ impl PagedTable {
             let count = guard.get_mut(|page| {
                 let mut local_count = 0;
                 for slot_idx in 0..page.slots.len() {
-                    if let Ok(row) = page.get_row(slot_idx as u16) {
+                    if let Ok(mut row) = page.get_row(slot_idx as u16) {
                         if predicate(&row) {
-                            page.delete_row(slot_idx as u16)?;
+                            // MVCC: mark row as deleted instead of physical removal
+                            row.mark_deleted(tx_id);
+                            page.update_row(slot_idx as u16, &row)?;
                             local_count += 1;
                         }
                     }
@@ -126,7 +128,8 @@ impl PagedTable {
             deleted_count += count;
         }
 
-        self.row_count -= deleted_count;
+        // Note: row_count stays the same (rows are marked, not removed)
+        // VACUUM will physically remove them later
         Ok(deleted_count)
     }
 
@@ -253,10 +256,11 @@ mod tests {
             } else {
                 false
             }
-        }).unwrap();
+        }, 100 /* tx_id */).unwrap();
 
         assert_eq!(deleted, 4);
-        assert_eq!(table.row_count(), 6);
+        // MVCC: rows are marked, not physically removed
+        assert_eq!(table.row_count(), 10); // All rows still present
     }
 
     #[test]

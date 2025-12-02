@@ -78,14 +78,14 @@ impl DatabaseStorage {
         paged_table.get_all_rows()
     }
 
-    /// Delete rows matching predicate
-    pub fn delete_where<F>(&mut self, table_name: &str, predicate: F) -> Result<usize, DatabaseError>
+    /// Delete rows matching predicate (MVCC-aware)
+    pub fn delete_where<F>(&mut self, table_name: &str, predicate: F, tx_id: u64) -> Result<usize, DatabaseError>
     where
         F: Fn(&Row) -> bool,
     {
         let paged_table = self.get_paged_table_mut(table_name)
             .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
-        paged_table.delete_where(predicate)
+        paged_table.delete_where(predicate, tx_id)
     }
 
     /// Update rows matching predicate
@@ -179,10 +179,11 @@ mod tests {
             } else {
                 false
             }
-        }).unwrap();
+        }, 100 /* tx_id */).unwrap();
 
         assert_eq!(deleted, 4);
-        assert_eq!(storage.row_count("users"), Some(6));
+        // MVCC: rows are marked, not physically removed
+        assert_eq!(storage.row_count("users"), Some(10)); // All rows still present
     }
 
     #[test]

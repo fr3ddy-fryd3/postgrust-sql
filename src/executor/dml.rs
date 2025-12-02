@@ -371,8 +371,8 @@ impl DmlExecutor {
             }
         };
 
-        // Execute delete
-        let deleted_count = storage.delete_where(predicate)?;
+        // Execute delete (MVCC: mark with xmax instead of physical removal)
+        let deleted_count = storage.delete_where(predicate, current_tx_id)?;
 
         // TODO: WAL logging
         if let Some(_se) = storage_engine {
