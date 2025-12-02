@@ -166,6 +166,9 @@ impl QueryExecutor {
                 let db_storage_ref = database_storage.as_deref();
                 QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, db_storage_ref)
             }
+            Statement::Vacuum { table } => {
+                super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, database_storage)
+            }
             Statement::Begin | Statement::Commit | Statement::Rollback => {
                 // Transaction commands should be handled at the server level
                 Err(DatabaseError::ParseError(

@@ -241,3 +241,17 @@ pub fn alter_table(input: &str) -> IResult<&str, Statement> {
         operation,
     }))
 }
+
+/// Parse VACUUM statement
+///
+/// Syntax:
+/// - VACUUM;              -- vacuum all tables
+/// - VACUUM table_name;   -- vacuum specific table
+pub fn parse_vacuum(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("VACUUM"))(input)?;
+
+    // Optional table name
+    let (input, table) = opt(ws(identifier))(input)?;
+
+    Ok((input, Statement::Vacuum { table }))
+}

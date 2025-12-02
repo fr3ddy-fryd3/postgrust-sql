@@ -29,28 +29,34 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
     let input = input.trim();
     let input = input.trim_end_matches(';');
 
+    // Split into two alt blocks due to nom's 21-element tuple limit
     let result = alt((
-        meta::show_users,
-        meta::show_databases,
-        meta::show_tables,
-        transaction::begin_transaction,
-        transaction::commit_transaction,
-        transaction::rollback_transaction,
-        ddl::create_type,
-        ddl::create_user,
-        ddl::drop_user,
-        ddl::alter_user,
-        ddl::create_database,
-        ddl::drop_database,
-        ddl::grant,
-        ddl::revoke,
-        ddl::create_table,
-        ddl::drop_table,
-        ddl::alter_table,
-        dml::insert,
-        queries::select,
-        dml::update,
-        dml::delete,
+        alt((
+            meta::show_users,
+            meta::show_databases,
+            meta::show_tables,
+            transaction::begin_transaction,
+            transaction::commit_transaction,
+            transaction::rollback_transaction,
+            ddl::create_type,
+            ddl::create_user,
+            ddl::drop_user,
+            ddl::alter_user,
+            ddl::create_database,
+        )),
+        alt((
+            ddl::drop_database,
+            ddl::grant,
+            ddl::revoke,
+            ddl::create_table,
+            ddl::drop_table,
+            ddl::alter_table,
+            ddl::parse_vacuum,
+            dml::insert,
+            queries::select,
+            dml::update,
+            dml::delete,
+        )),
     ))(input);
 
     match result {

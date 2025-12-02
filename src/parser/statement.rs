@@ -82,6 +82,10 @@ pub enum Statement {
         name: String,
         values: Vec<String>,
     },
+    // MVCC cleanup
+    Vacuum {
+        table: Option<String>, // None = all tables
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

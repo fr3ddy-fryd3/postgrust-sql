@@ -35,4 +35,65 @@ impl Row {
         //    that started after current transaction (xmax > current_tx_id)
         self.xmin <= current_tx_id && self.xmax.map_or(true, |xmax| xmax > current_tx_id)
     }
+
+    /// Checks if this row is dead and can be removed by VACUUM
+    ///
+    /// A row is dead if:
+    /// 1. It has been deleted/updated (xmax is set)
+    /// 2. The deletion is committed and invisible to all active transactions
+    ///    (xmax < oldest_active_tx)
+    ///
+    /// This ensures we only vacuum tuples that no transaction can see.
+    pub fn is_dead(&self, oldest_active_tx: u64) -> bool {
+        match self.xmax {
+            Some(xmax) => xmax < oldest_active_tx,
+            None => false, // Row is still alive
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_row_is_dead_with_no_xmax() {
+        let row = Row {
+            values: vec![],
+            xmin: 100,
+            xmax: None,
+        };
+
+        // Alive row is never dead
+        assert!(!row.is_dead(200));
+        assert!(!row.is_dead(150));
+        assert!(!row.is_dead(100));
+    }
+
+    #[test]
+    fn test_row_is_dead_with_old_xmax() {
+        let row = Row {
+            values: vec![],
+            xmin: 100,
+            xmax: Some(150),
+        };
+
+        // Dead if xmax < oldest_active_tx
+        assert!(row.is_dead(200));  // Deleted at 150, oldest tx is 200
+        assert!(row.is_dead(151));  // Deleted at 150, oldest tx is 151
+    }
+
+    #[test]
+    fn test_row_not_dead_if_visible_to_active_tx() {
+        let row = Row {
+            values: vec![],
+            xmin: 100,
+            xmax: Some(150),
+        };
+
+        // Not dead if some transaction can still see it
+        assert!(!row.is_dead(150)); // Transaction 150 can see pre-delete version
+        assert!(!row.is_dead(140)); // Transaction 140 can see it
+        assert!(!row.is_dead(100)); // Transaction 100 can see it
+    }
 }

@@ -27,6 +27,17 @@ impl TransactionManager {
     pub fn current_tx_id(&self) -> u64 {
         self.next_tx_id.load(Ordering::SeqCst)
     }
+
+    /// Gets the oldest transaction ID that could still see data
+    /// Used by VACUUM to determine safe cleanup horizon
+    ///
+    /// Note: Simplified implementation for v1.5.1
+    /// Returns current_tx_id since we don't track active transactions yet.
+    /// This is conservative (safe) but may leave some reclaimable dead tuples.
+    pub fn get_oldest_active_tx(&self) -> u64 {
+        // TODO v1.6: Track active transactions for more aggressive cleanup
+        self.current_tx_id()
+    }
 }
 
 impl Default for TransactionManager {
