@@ -58,8 +58,10 @@ impl QueryExecutor {
                         .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
                     let mut storage_adapter = PagedStorage::new(paged_table);
 
-                    let table_mut = db.get_table_mut(&table).unwrap();
+                    // Split borrow: get separate mutable references to different fields
+                    let table_mut = db.tables.get_mut(&table).unwrap();
                     let sequences_mut = &mut table_mut.sequences;
+                    let indexes = &mut db.indexes;
 
                     DmlExecutor::insert_with_storage(
                         &table_columns,
@@ -72,12 +74,15 @@ impl QueryExecutor {
                         &mut storage_adapter,
                         storage,
                         tx_manager,
+                        indexes,
                     )
                 } else {
                     // Legacy storage: use Vec<Row>
-                    let table_mut = db.get_table_mut(&table).unwrap();
-                    let mut storage_adapter = LegacyStorage::new(&mut table_mut.rows);
+                    // Split borrow: get separate mutable references to different fields
+                    let table_mut = db.tables.get_mut(&table).unwrap();
                     let sequences_mut = &mut table_mut.sequences;
+                    let indexes = &mut db.indexes;
+                    let mut storage_adapter = LegacyStorage::new(&mut table_mut.rows);
 
                     DmlExecutor::insert_with_storage(
                         &table_columns,
@@ -90,6 +95,7 @@ impl QueryExecutor {
                         &mut storage_adapter,
                         storage,
                         tx_manager,
+                        indexes,
                     )
                 }
             }

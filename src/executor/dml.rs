@@ -10,6 +10,8 @@ use crate::transaction::TransactionManager;
 use super::storage_adapter::{RowStorage, LegacyStorage};
 use super::legacy_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
+use crate::index::BTreeIndex;
+use std::collections::HashMap;
 
 pub struct DmlExecutor;
 
@@ -32,6 +34,7 @@ impl DmlExecutor {
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
+        indexes: &mut HashMap<String, BTreeIndex>,
     ) -> Result<QueryResult, DatabaseError> {
         // Reorder values to match table schema if columns specified
         let mut ordered_values = Self::reorder_values(table_columns, columns, values)?;
@@ -59,6 +62,20 @@ impl DmlExecutor {
 
         // Insert using RowStorage abstraction
         storage.insert(row)?;
+
+        // Get row index (newly inserted row is at the end)
+        let row_index = storage.count() - 1;
+
+        // Update all indexes on this table
+        for (idx_name, index) in indexes.iter_mut() {
+            if index.table_name == table_name {
+                // Find column index for this index
+                if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name) {
+                    let value = &ordered_values[col_idx];
+                    index.insert(value, row_index)?;
+                }
+            }
+        }
 
         // Update sequences for SERIAL columns (using mutable reference)
         for (idx, col) in table_columns.iter().enumerate() {
