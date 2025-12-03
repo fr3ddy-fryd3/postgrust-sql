@@ -8,8 +8,9 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release                        # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 117 tests (4 known failures in storage)
+cargo test                                 # 129 tests (4 known failures in storage)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
+./tests/integration/test_index_usage.sh    # Test B-tree index usage
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 ```
 
@@ -21,8 +22,9 @@ printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 - Binary storage + WAL (checkpoint every 100 ops)
 - Page-based storage (v1.5.0, 125x write amplification improvement)
 - VACUUM command for MVCC cleanup (v1.5.1)
+- **B-tree indexes with automatic query optimization (v1.6.0)** ✨
 
-## Architecture (v1.5.1)
+## Architecture (v1.6.0)
 
 ### Модульная структура:
 ```
@@ -32,16 +34,19 @@ src/
 ├── executor/      # Modular executor (v1.5.0) ✨
 │   ├── storage_adapter.rs  # RowStorage trait (Vec<Row> | PagedTable)
 │   ├── conditions.rs       # WHERE evaluation
-│   ├── dml.rs             # INSERT/UPDATE/DELETE
+│   ├── dml.rs             # INSERT/UPDATE/DELETE (with index maintenance)
 │   ├── ddl.rs             # CREATE/DROP/ALTER TABLE
-│   ├── queries.rs         # SELECT (regular/aggregate/join/group by)
+│   ├── queries.rs         # SELECT (with query planner for indexes)
 │   ├── vacuum.rs          # VACUUM cleanup (v1.5.1)
+│   ├── index.rs           # CREATE/DROP INDEX (v1.6.0)
 │   └── legacy.rs          # Minimal dispatcher (146 lines)
+├── index/         # B-tree index implementation (v1.6.0)
+│   └── btree.rs           # BTreeIndex (267 lines)
 ├── transaction/   # TransactionManager, Snapshot
 ├── storage/       # Binary save/load, WAL, Page-based (v1.5.0)
 └── network/       # TCP server, PostgreSQL protocol
 
-Total: 1,888 lines of modular code (vs 3009 lines monolith before refactoring)
+Total: ~2,400 lines of modular code (vs 3009 lines monolith before refactoring)
 ```
 
 ### Storage Architecture (v1.5.0):
@@ -87,6 +92,11 @@ SELECT * FROM users INNER JOIN orders ON users.id = orders.user_id;
 CREATE TYPE mood AS ENUM ('happy', 'sad');
 CREATE TABLE person (id SERIAL, m mood, data JSONB, uuid UUID);
 
+-- Indexes (v1.6.0)
+CREATE INDEX idx_age ON users(age);
+CREATE UNIQUE INDEX idx_email ON users(email);
+DROP INDEX idx_age;
+
 -- Maintenance
 VACUUM;              -- Cleanup all tables
 VACUUM table_name;   -- Cleanup specific table
@@ -130,6 +140,22 @@ COMMIT;  -- or ROLLBACK
 ```
 **Limitation**: Snapshot isolation works within single connection only.
 
+### B-tree Indexes (v1.6.0)
+```rust
+// Automatic query optimization
+SELECT * FROM users WHERE age = 30;
+// → Uses index if exists, O(log n) instead of O(n)
+
+// Index maintenance
+INSERT/UPDATE/DELETE automatically maintain indexes
+```
+**Features:**
+- CREATE INDEX / CREATE UNIQUE INDEX / DROP INDEX
+- Automatic query planner (index scan vs seq scan)
+- MVCC-aware visibility checks
+- Index maintenance on INSERT/UPDATE/DELETE
+- Supports Equals/GreaterThan/LessThan WHERE conditions
+
 ### PostgreSQL Protocol
 - Auto-detection (peek first 8 bytes)
 - Messages: StartupMessage, Query, RowDescription, DataRow, etc.
@@ -137,7 +163,7 @@ COMMIT;  -- or ROLLBACK
 
 ## Testing
 
-**Unit tests**: 117 tests (4 known storage failures)
+**Unit tests**: 129 tests (4 known storage failures)
 **Integration**:
 ```bash
 ./tests/integration/test_features.sh      # Full feature test
@@ -145,23 +171,23 @@ COMMIT;  -- or ROLLBACK
 ./tests/integration/test_new_types.sh     # All 23 types
 ./tests/integration/test_page_storage.sh  # Page-based (46 tests)
 ./tests/integration/test_vacuum.sh        # VACUUM cleanup (v1.5.1)
+./tests/integration/test_index.sh         # CREATE/DROP INDEX (v1.6.0)
+./tests/integration/test_index_usage.sh   # Index query optimization (v1.6.0)
 ```
 
 ## Limitations
 
-- No indexes (sequential scan only)
+- Indexes only support single-column, simple WHERE conditions (no AND/OR with indexes yet)
 - Single JOIN per query
 - WHERE with JOIN not fully supported
-- DELETE/UPDATE not MVCC-aware (physically modify rows instead of marking with xmax)
-  - VACUUM works but has nothing to clean (v1.5.1)
-  - True MVCC DELETE/UPDATE will be added in v1.6.0
 - Transactions not isolated between connections
 - Parser only supports =, !=, >, < operators (no <=, >=, LIKE, IN, etc.)
 
 ## Версионирование
 
-**Current**: v1.5.1 (VACUUM command for MVCC cleanup)
+**Current**: v1.6.0 (B-tree indexes with query optimization)
 **Previous**:
+- v1.5.1 - VACUUM command for MVCC cleanup
 - v1.5.0 - Page-based storage (125x write amplification improvement)
 - v1.4.1 - ALTER TABLE
 - v1.4.0 - OFFSET, DISTINCT, UNIQUE
