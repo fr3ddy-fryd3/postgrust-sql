@@ -7,10 +7,39 @@ use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, Sor
 use crate::transaction::TransactionManager;
 use super::legacy_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
+use crate::index::BTreeIndex;
 
 pub struct QueryExecutor;
 
 impl QueryExecutor {
+    /// Find usable index for WHERE condition
+    ///
+    /// Returns (index_name, column_name, value) if:
+    /// - Filter is Equals(col, val) or GreaterThan/LessThan
+    /// - Index exists on that column
+    fn find_usable_index<'a>(
+        db: &'a Database,
+        table_name: &str,
+        filter: &'a Option<Condition>,
+    ) -> Option<(&'a str, &'a BTreeIndex, &'a str, &'a Value)> {
+        // Only optimize simple equality/range conditions (not AND/OR yet)
+        let (column, value) = match filter {
+            Some(Condition::Equals(col, val)) => (col, val),
+            Some(Condition::GreaterThan(col, val)) => (col, val),
+            Some(Condition::LessThan(col, val)) => (col, val),
+            _ => return None, // AND/OR/NotEquals require full scan
+        };
+
+        // Find index on this column
+        for (idx_name, index) in &db.indexes {
+            if index.table_name == table_name && index.column_name == *column {
+                return Some((idx_name, index, column, value));
+            }
+        }
+
+        None
+    }
+
     /// Main SELECT dispatcher
     ///
     /// Routes to appropriate handler based on:
@@ -110,6 +139,9 @@ impl QueryExecutor {
         // Get current transaction ID for visibility checks (MVCC)
         let current_tx_id = tx_manager.current_tx_id();
 
+        // Try to use index if available
+        let use_index = Self::find_usable_index(db, &from, &filter);
+
         // Get rows from appropriate storage backend
         let rows_vec: Vec<Row>;
         let rows_iter: Box<dyn Iterator<Item = &Row>>;
@@ -130,23 +162,67 @@ impl QueryExecutor {
         // Collect rows with their original indices (for sorting)
         let mut rows_with_data: Vec<(Row, Vec<String>)> = Vec::new();
 
-        for row in rows_iter {
-            // MVCC: Check row visibility
-            if !row.is_visible(current_tx_id) {
-                continue;
-            }
+        // Index scan vs sequential scan
+        if let Some((_idx_name, index, _col_name, search_value)) = use_index {
+            // INDEX SCAN: Use B-tree index for fast lookup
+            let row_indices = index.search(search_value);
 
-            if let Some(ref cond) = filter {
-                if !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+            // Get all rows first (needed to access by index)
+            let all_rows: Vec<Row> = if let Some(db_storage) = database_storage {
+                if let Some(paged_table) = db_storage.get_paged_table(&from) {
+                    paged_table.get_all_rows()?
+                } else {
+                    return Err(DatabaseError::TableNotFound(from.clone()));
+                }
+            } else {
+                table.rows.clone()
+            };
+
+            for &row_idx in &row_indices {
+                if row_idx >= all_rows.len() {
+                    continue; // Skip invalid indices
+                }
+
+                let row = &all_rows[row_idx];
+
+                // MVCC: Check row visibility
+                if !row.is_visible(current_tx_id) {
                     continue;
                 }
-            }
 
-            let result_row: Vec<String> = column_indices
-                .iter()
-                .map(|&idx| row.values[idx].to_string())
-                .collect();
-            rows_with_data.push((row.clone(), result_row));
+                // Index already filtered by equality, but double-check condition
+                if let Some(ref cond) = filter {
+                    if !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                        continue;
+                    }
+                }
+
+                let result_row: Vec<String> = column_indices
+                    .iter()
+                    .map(|&idx| row.values[idx].to_string())
+                    .collect();
+                rows_with_data.push((row.clone(), result_row));
+            }
+        } else {
+            // SEQUENTIAL SCAN: Full table scan
+            for row in rows_iter {
+                // MVCC: Check row visibility
+                if !row.is_visible(current_tx_id) {
+                    continue;
+                }
+
+                if let Some(ref cond) = filter {
+                    if !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                        continue;
+                    }
+                }
+
+                let result_row: Vec<String> = column_indices
+                    .iter()
+                    .map(|&idx| row.values[idx].to_string())
+                    .collect();
+                rows_with_data.push((row.clone(), result_row));
+            }
         }
 
         // Apply ORDER BY if specified
