@@ -82,6 +82,16 @@ pub enum Statement {
         name: String,
         values: Vec<String>,
     },
+    // Indexes
+    CreateIndex {
+        name: String,
+        table: String,
+        column: String,
+        unique: bool,
+    },
+    DropIndex {
+        name: String,
+    },
     // MVCC cleanup
     Vacuum {
         table: Option<String>, // None = all tables
