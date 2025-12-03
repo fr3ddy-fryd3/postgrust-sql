@@ -21,6 +21,9 @@ pub mod transaction;
 // Storage layer (disk persistence, WAL)
 pub mod storage;
 
+// Index structures (B-tree, hash indexes)
+pub mod index;
+
 // Network protocols (TCP server, text protocol, PostgreSQL wire protocol)
 pub mod network;
 
