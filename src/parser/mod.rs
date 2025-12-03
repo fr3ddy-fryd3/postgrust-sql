@@ -51,6 +51,8 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
             ddl::create_table,
             ddl::drop_table,
             ddl::alter_table,
+            ddl::parse_create_index,
+            ddl::parse_drop_index,
             ddl::parse_vacuum,
             dml::insert,
             queries::select,
@@ -183,6 +185,48 @@ mod tests {
                 assert_eq!(col, "age");
             }
             _ => panic!("Expected complex SELECT"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_index() {
+        let sql = "CREATE INDEX idx_age ON users(age)";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::CreateIndex { name, table, column, unique } => {
+                assert_eq!(name, "idx_age");
+                assert_eq!(table, "users");
+                assert_eq!(column, "age");
+                assert_eq!(unique, false);
+            }
+            _ => panic!("Expected CREATE INDEX"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_unique_index() {
+        let sql = "CREATE UNIQUE INDEX idx_name ON users(name)";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::CreateIndex { name, table, column, unique } => {
+                assert_eq!(name, "idx_name");
+                assert_eq!(table, "users");
+                assert_eq!(column, "name");
+                assert_eq!(unique, true);
+            }
+            _ => panic!("Expected CREATE UNIQUE INDEX"),
+        }
+    }
+
+    #[test]
+    fn test_parse_drop_index() {
+        let sql = "DROP INDEX idx_age";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::DropIndex { name } => {
+                assert_eq!(name, "idx_age");
+            }
+            _ => panic!("Expected DROP INDEX"),
         }
     }
 }

@@ -242,6 +242,49 @@ pub fn alter_table(input: &str) -> IResult<&str, Statement> {
     }))
 }
 
+/// Parse CREATE INDEX statement
+///
+/// Syntax:
+/// - CREATE INDEX idx_name ON table(column);
+/// - CREATE UNIQUE INDEX idx_name ON table(column);
+pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("CREATE"))(input)?;
+
+    // Check for UNIQUE keyword
+    let (input, unique) = opt(ws(tag_no_case("UNIQUE")))(input)?;
+    let unique = unique.is_some();
+
+    let (input, _) = ws(tag_no_case("INDEX"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("ON"))(input)?;
+    let (input, table) = ws(identifier)(input)?;
+
+    // Column in parentheses
+    let (input, column) = delimited(
+        ws(char('(')),
+        ws(identifier),
+        ws(char(')'))
+    )(input)?;
+
+    Ok((input, Statement::CreateIndex {
+        name,
+        table,
+        column,
+        unique,
+    }))
+}
+
+/// Parse DROP INDEX statement
+///
+/// Syntax:
+/// - DROP INDEX idx_name;
+pub fn parse_drop_index(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("DROP INDEX"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+
+    Ok((input, Statement::DropIndex { name }))
+}
+
 /// Parse VACUUM statement
 ///
 /// Syntax:

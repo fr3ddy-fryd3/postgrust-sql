@@ -22,6 +22,7 @@ pub mod dml;
 pub mod ddl;
 pub mod queries;
 pub mod vacuum;
+pub mod index;
 
 // Re-export legacy executor for backward compatibility
 pub use legacy_executor::{QueryExecutor, QueryResult};
@@ -33,6 +34,7 @@ pub use dml::DmlExecutor;
 pub use ddl::DdlExecutor;
 pub use queries::QueryExecutor as QueriesExecutor;
 pub use vacuum::VacuumExecutor;
+pub use index::IndexExecutor;
 
 #[cfg(feature = "page_storage")]
 pub use storage_adapter::PagedStorage;
