@@ -316,6 +316,7 @@ impl DmlExecutor {
         storage_engine: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
         table_name: &str,
+        indexes: &mut HashMap<String, BTreeIndex>,
     ) -> Result<QueryResult, DatabaseError> {
         // Pre-calculate column indices
         let column_updates: Vec<(usize, Value)> = assignments
@@ -349,8 +350,48 @@ impl DmlExecutor {
             Row::new_with_xmin(new_values, current_tx_id)
         };
 
+        // For index updates: collect old rows before update
+        let all_rows_before = storage.get_all()?;
+        let mut updated_indices = Vec::new();
+
+        for (idx, row) in all_rows_before.iter().enumerate() {
+            if row.is_visible(current_tx_id) && predicate(row) {
+                updated_indices.push((idx, row.clone()));
+            }
+        }
+
         // Execute update (MVCC: mark old + insert new versions)
         let updated_count = storage.update_where(predicate, updater, current_tx_id)?;
+
+        // Update indexes: remove old entries, add new entries
+        if updated_count > 0 {
+            let all_rows_after = storage.get_all()?;
+            let total_rows = all_rows_after.len();
+
+            // New row indices start after original rows
+            let new_row_start_idx = total_rows - updated_count;
+
+            for (new_idx, (old_idx, old_row)) in updated_indices.iter().enumerate() {
+                let new_row_idx = new_row_start_idx + new_idx;
+                let new_row = &all_rows_after[new_row_idx];
+
+                // Update all indexes on this table
+                for (_idx_name, index) in indexes.iter_mut() {
+                    if index.table_name == table_name {
+                        if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name) {
+                            let old_value = &old_row.values[col_idx];
+                            let new_value = &new_row.values[col_idx];
+
+                            // Only update index if value changed
+                            if old_value != new_value {
+                                index.delete(old_value, *old_idx);
+                                index.insert(new_value, new_row_idx)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // TODO: WAL logging
         if let Some(_se) = storage_engine {
@@ -370,9 +411,30 @@ impl DmlExecutor {
         storage_engine: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
         table_name: &str,
+        indexes: &mut HashMap<String, BTreeIndex>,
     ) -> Result<QueryResult, DatabaseError> {
         // Get current transaction ID for MVCC
         let current_tx_id = tx_manager.current_tx_id();
+
+        // Collect rows to delete (for index updates)
+        let all_rows = storage.get_all()?;
+        let mut deleted_indices = Vec::new();
+
+        for (idx, row) in all_rows.iter().enumerate() {
+            if !row.is_visible(current_tx_id) {
+                continue;
+            }
+
+            let matches = if let Some(ref cond) = filter {
+                ConditionEvaluator::evaluate_with_columns(table_columns, row, cond).unwrap_or(false)
+            } else {
+                true
+            };
+
+            if matches {
+                deleted_indices.push((idx, row.clone()));
+            }
+        }
 
         // Define predicate closure
         let predicate = |row: &Row| -> bool {
@@ -390,6 +452,18 @@ impl DmlExecutor {
 
         // Execute delete (MVCC: mark with xmax instead of physical removal)
         let deleted_count = storage.delete_where(predicate, current_tx_id)?;
+
+        // Update indexes: remove deleted entries
+        for (row_idx, row) in deleted_indices {
+            for (_idx_name, index) in indexes.iter_mut() {
+                if index.table_name == table_name {
+                    if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name) {
+                        let value = &row.values[col_idx];
+                        index.delete(value, row_idx);
+                    }
+                }
+            }
+        }
 
         // TODO: WAL logging
         if let Some(_se) = storage_engine {

@@ -113,19 +113,21 @@ impl QueryExecutor {
                     let paged_table = db_storage.get_paged_table_mut(&table)
                         .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
                     let mut storage_adapter = PagedStorage::new(paged_table);
+                    let indexes = &mut db.indexes;
 
                     DmlExecutor::update_with_storage(
-                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table
+                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table, indexes
                     )
                 } else {
                     // Legacy storage: use Vec<Row>
-                    let table_ref = db.get_table_mut(&table)
+                    let table_ref = db.tables.get_mut(&table)
                         .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
                     let table_columns = table_ref.columns.clone();
                     let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
+                    let indexes = &mut db.indexes;
 
                     DmlExecutor::update_with_storage(
-                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table
+                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table, indexes
                     )
                 }
             }
@@ -139,19 +141,21 @@ impl QueryExecutor {
                     let paged_table = db_storage.get_paged_table_mut(&from)
                         .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
                     let mut storage_adapter = PagedStorage::new(paged_table);
+                    let indexes = &mut db.indexes;
 
                     DmlExecutor::delete_with_storage(
-                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from
+                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from, indexes
                     )
                 } else {
                     // Legacy storage: use Vec<Row>
-                    let table_ref = db.get_table_mut(&from)
+                    let table_ref = db.tables.get_mut(&from)
                         .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
                     let table_columns = table_ref.columns.clone();
                     let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
+                    let indexes = &mut db.indexes;
 
                     DmlExecutor::delete_with_storage(
-                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from
+                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from, indexes
                     )
                 }
             }
