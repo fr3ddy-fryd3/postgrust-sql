@@ -8,9 +8,9 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release                        # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 129 tests (4 known failures in storage)
+cargo test                                 # 137 tests (4 known failures in storage)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
-./tests/integration/test_index_usage.sh    # Test B-tree index usage
+./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 ```
 
@@ -22,9 +22,9 @@ printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 - Binary storage + WAL (checkpoint every 100 ops)
 - Page-based storage (v1.5.0, 125x write amplification improvement)
 - VACUUM command for MVCC cleanup (v1.5.1)
-- **B-tree indexes with automatic query optimization (v1.6.0)** ✨
+- **B-tree & Hash indexes with automatic query optimization (v1.7.0)** ✨
 
-## Architecture (v1.6.0)
+## Architecture (v1.7.0)
 
 ### Модульная структура:
 ```
@@ -38,10 +38,12 @@ src/
 │   ├── ddl.rs             # CREATE/DROP/ALTER TABLE
 │   ├── queries.rs         # SELECT (with query planner for indexes)
 │   ├── vacuum.rs          # VACUUM cleanup (v1.5.1)
-│   ├── index.rs           # CREATE/DROP INDEX (v1.6.0)
+│   ├── index.rs           # CREATE/DROP INDEX (v1.7.0)
 │   └── legacy.rs          # Minimal dispatcher (146 lines)
-├── index/         # B-tree index implementation (v1.6.0)
-│   └── btree.rs           # BTreeIndex (267 lines)
+├── index/         # Index implementations (v1.7.0)
+│   ├── btree.rs           # BTreeIndex O(log n) - supports range queries
+│   ├── hash.rs            # HashIndex O(1) - equality only
+│   └── mod.rs             # IndexType enum and Index wrapper
 ├── transaction/   # TransactionManager, Snapshot
 ├── storage/       # Binary save/load, WAL, Page-based (v1.5.0)
 └── network/       # TCP server, PostgreSQL protocol
@@ -92,9 +94,10 @@ SELECT * FROM users INNER JOIN orders ON users.id = orders.user_id;
 CREATE TYPE mood AS ENUM ('happy', 'sad');
 CREATE TABLE person (id SERIAL, m mood, data JSONB, uuid UUID);
 
--- Indexes (v1.6.0)
-CREATE INDEX idx_age ON users(age);
-CREATE UNIQUE INDEX idx_email ON users(email);
+-- Indexes (v1.7.0)
+CREATE INDEX idx_age ON users(age);                    -- Default: B-tree
+CREATE INDEX idx_category ON products(category) USING HASH;  -- Hash index
+CREATE UNIQUE INDEX idx_email ON users(email) USING BTREE;   -- Explicit B-tree
 DROP INDEX idx_age;
 
 -- Maintenance
@@ -140,21 +143,27 @@ COMMIT;  -- or ROLLBACK
 ```
 **Limitation**: Snapshot isolation works within single connection only.
 
-### B-tree Indexes (v1.6.0)
-```rust
-// Automatic query optimization
-SELECT * FROM users WHERE age = 30;
-// → Uses index if exists, O(log n) instead of O(n)
+### Indexes (v1.7.0)
+```sql
+-- B-tree index: O(log n), supports range queries
+CREATE INDEX idx_age ON users(age) USING BTREE;
+SELECT * FROM users WHERE age > 30;  -- Can use index for range
 
-// Index maintenance
-INSERT/UPDATE/DELETE automatically maintain indexes
+-- Hash index: O(1) average case, equality only
+CREATE INDEX idx_category ON products(category) USING HASH;
+SELECT * FROM products WHERE category = 'Electronics';  -- O(1) lookup
+
+-- Index maintenance
+INSERT/UPDATE/DELETE automatically maintain all indexes
 ```
 **Features:**
+- Two index types: **BTREE** (default) and **HASH**
 - CREATE INDEX / CREATE UNIQUE INDEX / DROP INDEX
-- Automatic query planner (index scan vs seq scan)
+- Automatic query planner (chooses index scan vs seq scan)
 - MVCC-aware visibility checks
 - Index maintenance on INSERT/UPDATE/DELETE
-- Supports Equals/GreaterThan/LessThan WHERE conditions
+- B-tree: Supports Equals/GreaterThan/LessThan (range queries)
+- Hash: Supports Equals only (faster for exact matches)
 
 ### PostgreSQL Protocol
 - Auto-detection (peek first 8 bytes)
@@ -163,7 +172,7 @@ INSERT/UPDATE/DELETE automatically maintain indexes
 
 ## Testing
 
-**Unit tests**: 129 tests (4 known storage failures)
+**Unit tests**: 137 tests (4 known storage failures)
 **Integration**:
 ```bash
 ./tests/integration/test_features.sh      # Full feature test
@@ -173,11 +182,13 @@ INSERT/UPDATE/DELETE automatically maintain indexes
 ./tests/integration/test_vacuum.sh        # VACUUM cleanup (v1.5.1)
 ./tests/integration/test_index.sh         # CREATE/DROP INDEX (v1.6.0)
 ./tests/integration/test_index_usage.sh   # Index query optimization (v1.6.0)
+./tests/integration/test_hash_index.sh    # Hash & B-tree indexes (v1.7.0)
 ```
 
 ## Limitations
 
 - Indexes only support single-column, simple WHERE conditions (no AND/OR with indexes yet)
+- Hash indexes only support equality (=) - use B-tree for range queries (>, <, !=)
 - Single JOIN per query
 - WHERE with JOIN not fully supported
 - Transactions not isolated between connections
@@ -185,8 +196,9 @@ INSERT/UPDATE/DELETE automatically maintain indexes
 
 ## Версионирование
 
-**Current**: v1.6.0 (B-tree indexes with query optimization)
+**Current**: v1.7.0 (Hash indexes with USING clause)
 **Previous**:
+- v1.6.0 - B-tree indexes with query optimization
 - v1.5.1 - VACUUM command for MVCC cleanup
 - v1.5.0 - Page-based storage (125x write amplification improvement)
 - v1.4.1 - ALTER TABLE
