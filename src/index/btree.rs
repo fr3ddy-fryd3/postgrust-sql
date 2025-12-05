@@ -10,12 +10,13 @@
 
 use crate::types::{Value, DatabaseError};
 use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
 
 /// B-tree index for single column
 ///
 /// Current implementation uses Rust's BTreeMap as foundation.
 /// Maps column values to row indices.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeIndex {
     /// Name of this index
     pub name: String,
@@ -35,7 +36,7 @@ pub struct BTreeIndex {
 }
 
 /// Wrapper for Value to make it sortable in BTreeMap
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct IndexKey(String);
 
 impl From<&Value> for IndexKey {

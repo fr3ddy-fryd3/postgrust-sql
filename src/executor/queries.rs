@@ -7,7 +7,7 @@ use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, Sor
 use crate::transaction::TransactionManager;
 use super::legacy_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
-use crate::index::BTreeIndex;
+use crate::index::Index;
 
 pub struct QueryExecutor;
 
@@ -21,7 +21,7 @@ impl QueryExecutor {
         db: &'a Database,
         table_name: &str,
         filter: &'a Option<Condition>,
-    ) -> Option<(&'a str, &'a BTreeIndex, &'a str, &'a Value)> {
+    ) -> Option<(&'a str, &'a Index, &'a str, &'a Value)> {
         // Only optimize simple equality/range conditions (not AND/OR yet)
         let (column, value) = match filter {
             Some(Condition::Equals(col, val)) => (col, val),
@@ -32,7 +32,7 @@ impl QueryExecutor {
 
         // Find index on this column
         for (idx_name, index) in &db.indexes {
-            if index.table_name == table_name && index.column_name == *column {
+            if index.table_name() == table_name && index.column_name() == *column {
                 return Some((idx_name, index, column, value));
             }
         }

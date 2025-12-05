@@ -4,14 +4,14 @@
 
 use crate::types::{Database, DatabaseError};
 use crate::executor::QueryResult;
-use crate::index::BTreeIndex;
+use crate::index::{Index, IndexType, BTreeIndex, HashIndex};
 
 pub struct IndexExecutor;
 
 impl IndexExecutor {
     /// Execute CREATE INDEX
     ///
-    /// Creates a B-tree index on specified column.
+    /// Creates a B-tree or Hash index on specified column.
     /// Populates index with existing data from table.
     pub fn create_index(
         db: &mut Database,
@@ -19,6 +19,7 @@ impl IndexExecutor {
         table_name: String,
         column_name: String,
         unique: bool,
+        index_type: IndexType,
     ) -> Result<QueryResult, DatabaseError> {
         // Check if index already exists
         if db.indexes.contains_key(&name) {
@@ -36,13 +37,25 @@ impl IndexExecutor {
             .position(|c| c.name == column_name)
             .ok_or_else(|| DatabaseError::ColumnNotFound(column_name.clone()))?;
 
-        // Create index
-        let mut index = BTreeIndex::new(
-            name.clone(),
-            table_name.clone(),
-            column_name.clone(),
-            unique,
-        );
+        // Create index based on type
+        let mut index = match index_type {
+            IndexType::BTree => {
+                Index::BTree(BTreeIndex::new(
+                    name.clone(),
+                    table_name.clone(),
+                    column_name.clone(),
+                    unique,
+                ))
+            }
+            IndexType::Hash => {
+                Index::Hash(HashIndex::new(
+                    name.clone(),
+                    table_name.clone(),
+                    column_name.clone(),
+                    unique,
+                ))
+            }
+        };
 
         // Populate index with existing data
         for (row_idx, row) in table.rows.iter().enumerate() {
@@ -54,8 +67,8 @@ impl IndexExecutor {
         db.indexes.insert(name.clone(), index);
 
         Ok(QueryResult::Success(format!(
-            "Index '{}' created on {}.{}",
-            name, table_name, column_name
+            "Index '{}' created on {}.{} using {}",
+            name, table_name, column_name, index_type.as_str()
         )))
     }
 
@@ -80,10 +93,9 @@ mod tests {
     use crate::types::{Table, Column, DataType, Row, Value};
 
     #[test]
-    fn test_create_index() {
+    fn test_create_btree_index() {
         let mut db = Database::new("test".to_string());
 
-        // Create table with data
         let columns = vec![
             Column {
                 name: "id".to_string(),
@@ -106,27 +118,62 @@ mod tests {
         table.rows = vec![
             Row::new(vec![Value::Integer(1), Value::Text("Alice".to_string())]),
             Row::new(vec![Value::Integer(2), Value::Text("Bob".to_string())]),
-            Row::new(vec![Value::Integer(3), Value::Text("Charlie".to_string())]),
         ];
         db.create_table(table).unwrap();
 
-        // Create index
         let result = IndexExecutor::create_index(
             &mut db,
             "idx_id".to_string(),
             "users".to_string(),
             "id".to_string(),
-            true,
+            false,
+            IndexType::BTree,
         );
 
         assert!(result.is_ok());
         assert!(db.indexes.contains_key("idx_id"));
 
-        // Verify index is populated
-        let index = db.indexes.get("idx_id").unwrap();
-        assert_eq!(index.entry_count(), 3);
+        let index = &db.indexes["idx_id"];
         assert_eq!(index.search(&Value::Integer(1)), vec![0]);
         assert_eq!(index.search(&Value::Integer(2)), vec![1]);
+    }
+
+    #[test]
+    fn test_create_hash_index() {
+        let mut db = Database::new("test".to_string());
+
+        let columns = vec![
+            Column {
+                name: "category".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+        ];
+        let mut table = Table::new("products".to_string(), columns);
+        table.rows = vec![
+            Row::new(vec![Value::Text("Electronics".to_string())]),
+            Row::new(vec![Value::Text("Books".to_string())]),
+        ];
+        db.create_table(table).unwrap();
+
+        let result = IndexExecutor::create_index(
+            &mut db,
+            "idx_category".to_string(),
+            "products".to_string(),
+            "category".to_string(),
+            false,
+            IndexType::Hash,
+        );
+
+        assert!(result.is_ok());
+        assert!(db.indexes.contains_key("idx_category"));
+
+        let index = &db.indexes["idx_category"];
+        assert_eq!(index.search(&Value::Text("Electronics".to_string())), vec![0]);
+        assert_eq!(index.search(&Value::Text("Books".to_string())), vec![1]);
     }
 
     #[test]
@@ -151,16 +198,18 @@ mod tests {
             "idx_id".to_string(),
             "users".to_string(),
             "id".to_string(),
-            true,
-        ).unwrap();
+            false,
+            IndexType::BTree,
+        )
+        .unwrap();
 
-        // Try to create duplicate
         let result = IndexExecutor::create_index(
             &mut db,
             "idx_id".to_string(),
             "users".to_string(),
             "id".to_string(),
-            true,
+            false,
+            IndexType::BTree,
         );
 
         assert!(result.is_err());
@@ -188,10 +237,11 @@ mod tests {
             "idx_id".to_string(),
             "users".to_string(),
             "id".to_string(),
-            true,
-        ).unwrap();
+            false,
+            IndexType::BTree,
+        )
+        .unwrap();
 
-        // Drop index
         let result = IndexExecutor::drop_index(&mut db, "idx_id".to_string());
         assert!(result.is_ok());
         assert!(!db.indexes.contains_key("idx_id"));

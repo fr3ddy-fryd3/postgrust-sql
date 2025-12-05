@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::table::Table;
 use super::error::DatabaseError;
-use crate::index::BTreeIndex;
+use crate::index::Index;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Database {
@@ -10,7 +10,7 @@ pub struct Database {
     pub tables: HashMap<String, Table>,
     pub enums: HashMap<String, Vec<String>>, // enum_name -> allowed values
     #[serde(skip)] // Don't serialize indexes (rebuild on load)
-    pub indexes: HashMap<String, BTreeIndex>, // index_name -> BTreeIndex
+    pub indexes: HashMap<String, Index>, // index_name -> Index (BTree or Hash)
 }
 
 impl Database {

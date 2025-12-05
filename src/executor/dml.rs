@@ -10,7 +10,7 @@ use crate::transaction::TransactionManager;
 use super::storage_adapter::{RowStorage, LegacyStorage};
 use super::legacy_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
-use crate::index::BTreeIndex;
+use crate::index::Index;
 use std::collections::HashMap;
 
 pub struct DmlExecutor;
@@ -34,7 +34,7 @@ impl DmlExecutor {
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
-        indexes: &mut HashMap<String, BTreeIndex>,
+        indexes: &mut HashMap<String, Index>,
     ) -> Result<QueryResult, DatabaseError> {
         // Reorder values to match table schema if columns specified
         let mut ordered_values = Self::reorder_values(table_columns, columns, values)?;
@@ -68,9 +68,9 @@ impl DmlExecutor {
 
         // Update all indexes on this table
         for (idx_name, index) in indexes.iter_mut() {
-            if index.table_name == table_name {
+            if index.table_name() == table_name {
                 // Find column index for this index
-                if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name) {
+                if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
                     let value = &ordered_values[col_idx];
                     index.insert(value, row_index)?;
                 }
@@ -316,7 +316,7 @@ impl DmlExecutor {
         storage_engine: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
         table_name: &str,
-        indexes: &mut HashMap<String, BTreeIndex>,
+        indexes: &mut HashMap<String, Index>,
     ) -> Result<QueryResult, DatabaseError> {
         // Pre-calculate column indices
         let column_updates: Vec<(usize, Value)> = assignments
@@ -377,8 +377,8 @@ impl DmlExecutor {
 
                 // Update all indexes on this table
                 for (_idx_name, index) in indexes.iter_mut() {
-                    if index.table_name == table_name {
-                        if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name) {
+                    if index.table_name() == table_name {
+                        if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
                             let old_value = &old_row.values[col_idx];
                             let new_value = &new_row.values[col_idx];
 
@@ -411,7 +411,7 @@ impl DmlExecutor {
         storage_engine: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
         table_name: &str,
-        indexes: &mut HashMap<String, BTreeIndex>,
+        indexes: &mut HashMap<String, Index>,
     ) -> Result<QueryResult, DatabaseError> {
         // Get current transaction ID for MVCC
         let current_tx_id = tx_manager.current_tx_id();
@@ -456,8 +456,8 @@ impl DmlExecutor {
         // Update indexes: remove deleted entries
         for (row_idx, row) in deleted_indices {
             for (_idx_name, index) in indexes.iter_mut() {
-                if index.table_name == table_name {
-                    if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name) {
+                if index.table_name() == table_name {
+                    if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
                         let value = &row.values[col_idx];
                         index.delete(value, row_idx);
                     }
