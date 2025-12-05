@@ -247,6 +247,8 @@ pub fn alter_table(input: &str) -> IResult<&str, Statement> {
 /// Syntax:
 /// - CREATE INDEX idx_name ON table(column);
 /// - CREATE UNIQUE INDEX idx_name ON table(column);
+/// - CREATE INDEX idx_name ON table(column) USING HASH;
+/// - CREATE INDEX idx_name ON table(column) USING BTREE;
 pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
     let (input, _) = ws(tag_no_case("CREATE"))(input)?;
 
@@ -266,11 +268,26 @@ pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
         ws(char(')'))
     )(input)?;
 
+    // Optional USING clause
+    let (input, index_type) = opt(|i| {
+        let (i, _) = ws(tag_no_case("USING"))(i)?;
+        let (i, type_name) = ws(identifier)(i)?;
+        Ok((i, type_name))
+    })(input)?;
+
+    let index_type = match index_type.as_deref() {
+        Some("hash") | Some("HASH") => crate::index::IndexType::Hash,
+        Some("btree") | Some("BTREE") => crate::index::IndexType::BTree,
+        None => crate::index::IndexType::BTree, // default
+        _ => crate::index::IndexType::BTree, // invalid type defaults to btree
+    };
+
     Ok((input, Statement::CreateIndex {
         name,
         table,
         column,
         unique,
+        index_type,
     }))
 }
 

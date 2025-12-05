@@ -193,11 +193,12 @@ mod tests {
         let sql = "CREATE INDEX idx_age ON users(age)";
         let stmt = parse_statement(sql).unwrap();
         match stmt {
-            Statement::CreateIndex { name, table, column, unique } => {
+            Statement::CreateIndex { name, table, column, unique, index_type } => {
                 assert_eq!(name, "idx_age");
                 assert_eq!(table, "users");
                 assert_eq!(column, "age");
                 assert_eq!(unique, false);
+                assert_eq!(index_type, crate::index::IndexType::BTree); // default
             }
             _ => panic!("Expected CREATE INDEX"),
         }
@@ -208,13 +209,46 @@ mod tests {
         let sql = "CREATE UNIQUE INDEX idx_name ON users(name)";
         let stmt = parse_statement(sql).unwrap();
         match stmt {
-            Statement::CreateIndex { name, table, column, unique } => {
+            Statement::CreateIndex { name, table, column, unique, index_type } => {
                 assert_eq!(name, "idx_name");
                 assert_eq!(table, "users");
                 assert_eq!(column, "name");
                 assert_eq!(unique, true);
+                assert_eq!(index_type, crate::index::IndexType::BTree); // default
             }
             _ => panic!("Expected CREATE UNIQUE INDEX"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_hash_index() {
+        let sql = "CREATE INDEX idx_category ON products(category) USING HASH";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::CreateIndex { name, table, column, unique, index_type } => {
+                assert_eq!(name, "idx_category");
+                assert_eq!(table, "products");
+                assert_eq!(column, "category");
+                assert_eq!(unique, false);
+                assert_eq!(index_type, crate::index::IndexType::Hash);
+            }
+            _ => panic!("Expected CREATE INDEX USING HASH"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_btree_index() {
+        let sql = "CREATE INDEX idx_price ON products(price) USING BTREE";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::CreateIndex { name, table, column, unique, index_type } => {
+                assert_eq!(name, "idx_price");
+                assert_eq!(table, "products");
+                assert_eq!(column, "price");
+                assert_eq!(unique, false);
+                assert_eq!(index_type, crate::index::IndexType::BTree);
+            }
+            _ => panic!("Expected CREATE INDEX USING BTREE"),
         }
     }
 

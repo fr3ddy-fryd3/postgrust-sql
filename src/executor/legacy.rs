@@ -176,8 +176,8 @@ impl QueryExecutor {
                 let db_storage_ref = database_storage.as_deref();
                 QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, db_storage_ref)
             }
-            Statement::CreateIndex { name, table, column, unique } => {
-                super::index::IndexExecutor::create_index(db, name, table, column, unique)
+            Statement::CreateIndex { name, table, column, unique, index_type } => {
+                super::index::IndexExecutor::create_index(db, name, table, column, unique, index_type)
             }
             Statement::DropIndex { name } => {
                 super::index::IndexExecutor::drop_index(db, name)

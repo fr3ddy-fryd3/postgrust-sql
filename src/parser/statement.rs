@@ -88,6 +88,7 @@ pub enum Statement {
         table: String,
         column: String,
         unique: bool,
+        index_type: crate::index::IndexType,
     },
     DropIndex {
         name: String,
