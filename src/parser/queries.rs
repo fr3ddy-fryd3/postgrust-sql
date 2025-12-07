@@ -15,19 +15,82 @@ use nom::{
 
 // Parse a simple condition (column = value, etc.)
 fn condition_term(input: &str) -> IResult<&str, Condition> {
-    let (input, column) = ws(identifier)(input)?;
-    let (input, op) = ws(alt((tag("="), tag("!="), tag(">"), tag("<"))))(input)?;
-    let (input, val) = ws(value)(input)?;
-
-    let cond = match op {
-        "=" => Condition::Equals(column, val),
-        "!=" => Condition::NotEquals(column, val),
-        ">" => Condition::GreaterThan(column, val),
-        "<" => Condition::LessThan(column, val),
-        _ => unreachable!(),
-    };
-
-    Ok((input, cond))
+    alt((
+        // IS NULL / IS NOT NULL (v1.8.0)
+        map(
+            tuple((
+                ws(identifier),
+                ws(tag_no_case("IS")),
+                ws(tag_no_case("NOT")),
+                ws(tag_no_case("NULL")),
+            )),
+            |(col, _, _, _)| Condition::IsNotNull(col),
+        ),
+        map(
+            tuple((ws(identifier), ws(tag_no_case("IS")), ws(tag_no_case("NULL")))),
+            |(col, _, _)| Condition::IsNull(col),
+        ),
+        // BETWEEN (v1.8.0)
+        map(
+            tuple((
+                ws(identifier),
+                ws(tag_no_case("BETWEEN")),
+                ws(value),
+                ws(tag_no_case("AND")),
+                ws(value),
+            )),
+            |(col, _, low, _, high)| Condition::Between(col, low, high),
+        ),
+        // LIKE (v1.8.0)
+        map(
+            tuple((ws(identifier), ws(tag_no_case("LIKE")), ws(value))),
+            |(col, _, val)| {
+                if let crate::types::Value::Text(pattern) = val {
+                    Condition::Like(col, pattern)
+                } else {
+                    // Fallback - should not happen with proper value parser
+                    Condition::Like(col, String::new())
+                }
+            },
+        ),
+        // IN (v1.8.0)
+        map(
+            tuple((
+                ws(identifier),
+                ws(tag_no_case("IN")),
+                delimited(
+                    ws(char('(')),
+                    separated_list1(ws(char(',')), ws(value)),
+                    ws(char(')')),
+                ),
+            )),
+            |(col, _, values)| Condition::In(col, values),
+        ),
+        // Comparison operators (including >=, <=)
+        map(
+            tuple((
+                ws(identifier),
+                ws(alt((
+                    tag(">="),
+                    tag("<="),
+                    tag("!="),
+                    tag("="),
+                    tag(">"),
+                    tag("<"),
+                ))),
+                ws(value),
+            )),
+            |(column, op, val)| match op {
+                "=" => Condition::Equals(column, val),
+                "!=" => Condition::NotEquals(column, val),
+                ">" => Condition::GreaterThan(column, val),
+                "<" => Condition::LessThan(column, val),
+                ">=" => Condition::GreaterThanOrEqual(column, val), // v1.8.0
+                "<=" => Condition::LessThanOrEqual(column, val),    // v1.8.0
+                _ => unreachable!(),
+            },
+        ),
+    ))(input)
 }
 
 // Parse AND conditions (higher priority than OR)

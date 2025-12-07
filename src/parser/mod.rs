@@ -32,6 +32,7 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
     // Split into two alt blocks due to nom's 21-element tuple limit
     let result = alt((
         alt((
+            meta::explain,  // v1.8.0 - must come before show_* to avoid conflicts
             meta::show_users,
             meta::show_databases,
             meta::show_tables,

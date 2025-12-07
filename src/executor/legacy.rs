@@ -185,6 +185,14 @@ impl QueryExecutor {
             Statement::Vacuum { table } => {
                 super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, database_storage)
             }
+            Statement::Explain { statement } => {
+                let result = super::explain::ExplainExecutor::explain(db, &*statement)?;
+                // Convert explain::QueryResult to legacy::QueryResult
+                match result {
+                    super::explain::QueryResult::Success(msg) => Ok(QueryResult::Success(msg)),
+                    super::explain::QueryResult::Rows(rows, cols) => Ok(QueryResult::Rows(rows, cols)),
+                }
+            }
             Statement::Begin | Statement::Commit | Statement::Rollback => {
                 // Transaction commands should be handled at the server level
                 Err(DatabaseError::ParseError(

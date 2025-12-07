@@ -97,6 +97,10 @@ pub enum Statement {
     Vacuum {
         table: Option<String>, // None = all tables
     },
+    // Query analysis (v1.8.0)
+    Explain {
+        statement: Box<Statement>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,6 +138,13 @@ pub enum Condition {
     NotEquals(String, crate::types::Value),
     GreaterThan(String, crate::types::Value),
     LessThan(String, crate::types::Value),
+    GreaterThanOrEqual(String, crate::types::Value),  // v1.8.0
+    LessThanOrEqual(String, crate::types::Value),     // v1.8.0
+    Between(String, crate::types::Value, crate::types::Value), // v1.8.0: col BETWEEN a AND b
+    Like(String, String),                              // v1.8.0: col LIKE pattern
+    In(String, Vec<crate::types::Value>),             // v1.8.0: col IN (list)
+    IsNull(String),                                    // v1.8.0: col IS NULL
+    IsNotNull(String),                                 // v1.8.0: col IS NOT NULL
     And(Box<Condition>, Box<Condition>),
     Or(Box<Condition>, Box<Condition>),
 }
