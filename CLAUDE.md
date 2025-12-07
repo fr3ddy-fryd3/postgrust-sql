@@ -8,9 +8,11 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release                        # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 137 tests (4 known failures in storage)
+cargo test                                 # 144 tests (4 known failures in storage)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
+./tests/integration/test_extended_operators.sh  # Test extended WHERE operators
+./tests/integration/test_explain.sh        # Test EXPLAIN command
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 ```
 
@@ -22,9 +24,10 @@ printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 - Binary storage + WAL (checkpoint every 100 ops)
 - Page-based storage (v1.5.0, 125x write amplification improvement)
 - VACUUM command for MVCC cleanup (v1.5.1)
-- **B-tree & Hash indexes with automatic query optimization (v1.7.0)** ✨
+- B-tree & Hash indexes with automatic query optimization (v1.7.0)
+- **Extended WHERE operators (>=, <=, BETWEEN, LIKE, IN, IS NULL) + EXPLAIN (v1.8.0)** ✨
 
-## Architecture (v1.7.0)
+## Architecture (v1.8.0)
 
 ### Модульная структура:
 ```
@@ -33,12 +36,13 @@ src/
 ├── parser/        # SQL parser (nom) - ddl.rs, dml.rs, queries.rs
 ├── executor/      # Modular executor (v1.5.0) ✨
 │   ├── storage_adapter.rs  # RowStorage trait (Vec<Row> | PagedTable)
-│   ├── conditions.rs       # WHERE evaluation
+│   ├── conditions.rs       # WHERE evaluation (=, !=, >, <, >=, <=, BETWEEN, LIKE, IN, IS NULL)
 │   ├── dml.rs             # INSERT/UPDATE/DELETE (with index maintenance)
 │   ├── ddl.rs             # CREATE/DROP/ALTER TABLE
 │   ├── queries.rs         # SELECT (with query planner for indexes)
 │   ├── vacuum.rs          # VACUUM cleanup (v1.5.1)
 │   ├── index.rs           # CREATE/DROP INDEX (v1.7.0)
+│   ├── explain.rs         # EXPLAIN query analyzer (v1.8.0)
 │   └── legacy.rs          # Minimal dispatcher (146 lines)
 ├── index/         # Index implementations (v1.7.0)
 │   ├── btree.rs           # BTreeIndex O(log n) - supports range queries
@@ -90,6 +94,13 @@ SELECT * FROM t WHERE age > 18 ORDER BY name LIMIT 10 OFFSET 5;
 SELECT name, COUNT(*) FROM t GROUP BY name HAVING COUNT(*) > 1;
 SELECT * FROM users INNER JOIN orders ON users.id = orders.user_id;
 
+-- Extended WHERE (v1.8.0)
+SELECT * FROM users WHERE age >= 25 AND age <= 35;
+SELECT * FROM products WHERE price BETWEEN 100 AND 500;
+SELECT * FROM users WHERE name LIKE 'A%';            -- % = any chars, _ = single char
+SELECT * FROM orders WHERE status IN ('pending', 'shipped');
+SELECT * FROM users WHERE email IS NOT NULL;
+
 -- Types
 CREATE TYPE mood AS ENUM ('happy', 'sad');
 CREATE TABLE person (id SERIAL, m mood, data JSONB, uuid UUID);
@@ -99,6 +110,10 @@ CREATE INDEX idx_age ON users(age);                    -- Default: B-tree
 CREATE INDEX idx_category ON products(category) USING HASH;  -- Hash index
 CREATE UNIQUE INDEX idx_email ON users(email) USING BTREE;   -- Explicit B-tree
 DROP INDEX idx_age;
+
+-- Query Analysis (v1.8.0)
+EXPLAIN SELECT * FROM users WHERE age = 30;
+-- Shows: Index Scan using idx_age (btree), Rows: ~1, Cost: O(log n)
 
 -- Maintenance
 VACUUM;              -- Cleanup all tables
@@ -165,6 +180,60 @@ INSERT/UPDATE/DELETE automatically maintain all indexes
 - B-tree: Supports Equals/GreaterThan/LessThan (range queries)
 - Hash: Supports Equals only (faster for exact matches)
 
+### Extended WHERE Operators (v1.8.0)
+```sql
+-- Comparison operators
+WHERE age >= 25          -- Greater than or equal
+WHERE age <= 35          -- Less than or equal
+
+-- Range queries
+WHERE age BETWEEN 25 AND 35  -- Inclusive range
+
+-- Pattern matching
+WHERE name LIKE 'A%'     -- Starts with A
+WHERE name LIKE '%son'   -- Ends with 'son'
+WHERE name LIKE '%li%'   -- Contains 'li'
+WHERE name LIKE 'A____'  -- A followed by 4 chars
+
+-- List membership
+WHERE status IN ('pending', 'shipped', 'delivered')
+WHERE id IN (1, 2, 3)
+
+-- NULL checks
+WHERE email IS NULL
+WHERE email IS NOT NULL
+```
+**Features:**
+- **LIKE pattern matching**: % (any chars), _ (single char)
+- **BETWEEN**: Inclusive range (low AND high)
+- **IN**: Membership in value list
+- **IS NULL / IS NOT NULL**: Null checks
+- Works with all data types
+- Efficient recursive pattern matching for LIKE
+
+### EXPLAIN Command (v1.8.0)
+```sql
+EXPLAIN SELECT * FROM users WHERE age = 30;
+```
+**Output:**
+```
+QUERY PLAN
+──────────────────────────────────────────────────
+→ Index Scan using idx_age (btree)
+  on users
+  Index Cond: age = Integer(30)
+  Rows: ~1
+  Cost: O(log n)
+──────────────────────────────────────────────────
+```
+**Features:**
+- Shows execution plan for SELECT queries
+- Identifies scan type: Sequential | Index | Unique Index
+- Displays index usage (name + type: hash/btree)
+- Cost estimates: O(1), O(log n), O(n)
+- Row count estimates
+- Helps optimize queries and identify missing indexes
+
 ### PostgreSQL Protocol
 - Auto-detection (peek first 8 bytes)
 - Messages: StartupMessage, Query, RowDescription, DataRow, etc.
@@ -172,7 +241,7 @@ INSERT/UPDATE/DELETE automatically maintain all indexes
 
 ## Testing
 
-**Unit tests**: 137 tests (4 known storage failures)
+**Unit tests**: 144 tests (4 known storage failures)
 **Integration**:
 ```bash
 ./tests/integration/test_features.sh      # Full feature test
@@ -183,21 +252,24 @@ INSERT/UPDATE/DELETE automatically maintain all indexes
 ./tests/integration/test_index.sh         # CREATE/DROP INDEX (v1.6.0)
 ./tests/integration/test_index_usage.sh   # Index query optimization (v1.6.0)
 ./tests/integration/test_hash_index.sh    # Hash & B-tree indexes (v1.7.0)
+./tests/integration/test_extended_operators.sh  # Extended WHERE (v1.8.0)
+./tests/integration/test_explain.sh       # EXPLAIN command (v1.8.0)
 ```
 
 ## Limitations
 
 - Indexes only support single-column, simple WHERE conditions (no AND/OR with indexes yet)
-- Hash indexes only support equality (=) - use B-tree for range queries (>, <, !=)
+- Hash indexes only support equality (=) - use B-tree for range queries
 - Single JOIN per query
 - WHERE with JOIN not fully supported
 - Transactions not isolated between connections
-- Parser only supports =, !=, >, < operators (no <=, >=, LIKE, IN, etc.)
+- EXPLAIN only supports SELECT (not INSERT/UPDATE/DELETE)
 
 ## Версионирование
 
-**Current**: v1.7.0 (Hash indexes with USING clause)
+**Current**: v1.8.0 (Extended WHERE operators + EXPLAIN command)
 **Previous**:
+- v1.7.0 - Hash indexes with USING clause
 - v1.6.0 - B-tree indexes with query optimization
 - v1.5.1 - VACUUM command for MVCC cleanup
 - v1.5.0 - Page-based storage (125x write amplification improvement)
