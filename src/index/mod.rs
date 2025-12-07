@@ -59,8 +59,8 @@ impl Index {
 
     pub fn column_name(&self) -> &str {
         match self {
-            Index::BTree(idx) => &idx.column_name,
-            Index::Hash(idx) => &idx.column_name,
+            Index::BTree(idx) => idx.column_name(),
+            Index::Hash(idx) => idx.column_name(),
         }
     }
 
@@ -96,6 +96,51 @@ impl Index {
         match self {
             Index::BTree(idx) => idx.search(value),
             Index::Hash(idx) => idx.search(value),
+        }
+    }
+
+    // === Composite index methods (v1.9.0) ===
+
+    pub fn column_names(&self) -> &[String] {
+        match self {
+            Index::BTree(idx) => &idx.column_names,
+            Index::Hash(idx) => &idx.column_names,
+        }
+    }
+
+    pub fn is_composite(&self) -> bool {
+        match self {
+            Index::BTree(idx) => idx.is_composite(),
+            Index::Hash(idx) => idx.is_composite(),
+        }
+    }
+
+    pub fn insert_composite(&mut self, values: &[crate::types::Value], row_index: usize) -> Result<(), crate::types::DatabaseError> {
+        match self {
+            Index::BTree(idx) => idx.insert_composite(values, row_index),
+            Index::Hash(idx) => idx.insert_composite(values, row_index),
+        }
+    }
+
+    pub fn delete_composite(&mut self, values: &[crate::types::Value], row_index: usize) {
+        match self {
+            Index::BTree(idx) => idx.delete_composite(values, row_index),
+            Index::Hash(idx) => idx.delete_composite(values, row_index),
+        }
+    }
+
+    pub fn search_composite(&self, values: &[crate::types::Value]) -> Vec<usize> {
+        match self {
+            Index::BTree(idx) => idx.search_composite(values),
+            Index::Hash(idx) => idx.search_composite(values),
+        }
+    }
+
+    /// Search with prefix match (only for B-tree composite indexes)
+    pub fn search_prefix(&self, values: &[crate::types::Value]) -> Option<Vec<usize>> {
+        match self {
+            Index::BTree(idx) if idx.is_composite() => Some(idx.search_prefix(values)),
+            _ => None,  // Hash indexes don't support prefix search
         }
     }
 }

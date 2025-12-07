@@ -12,10 +12,10 @@ use crate::types::{Value, DatabaseError};
 use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
-/// B-tree index for single column
+/// B-tree index for single or multiple columns (v1.9.0)
 ///
 /// Current implementation uses Rust's BTreeMap as foundation.
-/// Maps column values to row indices.
+/// Maps column value(s) to row indices.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeIndex {
     /// Name of this index
@@ -24,23 +24,38 @@ pub struct BTreeIndex {
     /// Table this index belongs to
     pub table_name: String,
 
-    /// Column being indexed
-    pub column_name: String,
+    /// Column(s) being indexed (single or composite)
+    pub column_names: Vec<String>,
 
     /// Is this a unique index?
     pub is_unique: bool,
 
-    /// The actual index: Value -> Vec<row_index>
+    /// The actual index: Value(s) -> Vec<row_index>
     /// Vec allows multiple rows with same value (non-unique indexes)
     tree: BTreeMap<IndexKey, Vec<usize>>,
 }
 
-/// Wrapper for Value to make it sortable in BTreeMap
+// Keep backward compatibility property
+impl BTreeIndex {
+    /// Get first column name (for backward compatibility with single-column APIs)
+    pub fn column_name(&self) -> &str {
+        &self.column_names[0]
+    }
+
+    /// Check if this is a composite index
+    pub fn is_composite(&self) -> bool {
+        self.column_names.len() > 1
+    }
+}
+
+/// Wrapper for Value(s) to make it sortable in BTreeMap
+/// Supports both single and composite keys (v1.9.0)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct IndexKey(String);
 
-impl From<&Value> for IndexKey {
-    fn from(value: &Value) -> Self {
+impl IndexKey {
+    /// Create key from single value
+    fn from_value(value: &Value) -> Self {
         // Convert Value to sortable string representation
         match value {
             Value::Integer(i) => IndexKey(format!("I{:020}", i)),
@@ -55,10 +70,25 @@ impl From<&Value> for IndexKey {
             _ => IndexKey(format!("{:?}", value)),
         }
     }
+
+    /// Create composite key from multiple values (v1.9.0)
+    fn from_values(values: &[Value]) -> Self {
+        let parts: Vec<String> = values.iter().map(|v| {
+            Self::from_value(v).0
+        }).collect();
+        IndexKey(parts.join("||"))  // Use || as separator
+    }
+}
+
+// Keep backward compatibility
+impl From<&Value> for IndexKey {
+    fn from(value: &Value) -> Self {
+        Self::from_value(value)
+    }
 }
 
 impl BTreeIndex {
-    /// Create a new B-tree index
+    /// Create a new B-tree index (single column)
     pub fn new(
         name: String,
         table_name: String,
@@ -68,7 +98,23 @@ impl BTreeIndex {
         Self {
             name,
             table_name,
-            column_name,
+            column_names: vec![column_name],
+            is_unique,
+            tree: BTreeMap::new(),
+        }
+    }
+
+    /// Create a new composite B-tree index (v1.9.0)
+    pub fn new_composite(
+        name: String,
+        table_name: String,
+        column_names: Vec<String>,
+        is_unique: bool,
+    ) -> Self {
+        Self {
+            name,
+            table_name,
+            column_names,
             is_unique,
             tree: BTreeMap::new(),
         }
@@ -132,6 +178,75 @@ impl BTreeIndex {
     /// Clear all entries from index
     pub fn clear(&mut self) {
         self.tree.clear();
+    }
+
+    // === Composite index methods (v1.9.0) ===
+
+    /// Insert composite key into index
+    pub fn insert_composite(&mut self, values: &[Value], row_index: usize) -> Result<(), DatabaseError> {
+        if values.len() != self.column_names.len() {
+            return Err(DatabaseError::ParseError(
+                format!("Expected {} values for composite index, got {}",
+                    self.column_names.len(), values.len())
+            ));
+        }
+
+        let key = IndexKey::from_values(values);
+
+        if self.is_unique && self.tree.contains_key(&key) {
+            return Err(DatabaseError::UniqueViolation(
+                format!("Duplicate key value violates unique constraint '{}'", self.name)
+            ));
+        }
+
+        self.tree.entry(key).or_insert_with(Vec::new).push(row_index);
+        Ok(())
+    }
+
+    /// Delete composite key from index
+    pub fn delete_composite(&mut self, values: &[Value], row_index: usize) {
+        if values.len() != self.column_names.len() {
+            return; // Ignore mismatched values
+        }
+
+        let key = IndexKey::from_values(values);
+
+        if let Some(indices) = self.tree.get_mut(&key) {
+            indices.retain(|&idx| idx != row_index);
+            if indices.is_empty() {
+                self.tree.remove(&key);
+            }
+        }
+    }
+
+    /// Search for rows with composite key match
+    pub fn search_composite(&self, values: &[Value]) -> Vec<usize> {
+        if values.len() != self.column_names.len() {
+            return Vec::new();
+        }
+
+        let key = IndexKey::from_values(values);
+        self.tree.get(&key).cloned().unwrap_or_default()
+    }
+
+    /// Search with prefix match (for composite indexes)
+    /// E.g., for index on (city, age), can search just by city
+    pub fn search_prefix(&self, values: &[Value]) -> Vec<usize> {
+        if values.is_empty() || values.len() > self.column_names.len() {
+            return Vec::new();
+        }
+
+        let prefix_key = IndexKey::from_values(values);
+        let prefix_str = &prefix_key.0;
+
+        // Find all keys that start with this prefix
+        let mut result = Vec::new();
+        for (key, indices) in self.tree.iter() {
+            if key.0.starts_with(prefix_str) {
+                result.extend_from_slice(indices);
+            }
+        }
+        result
     }
 }
 

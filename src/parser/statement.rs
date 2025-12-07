@@ -86,7 +86,7 @@ pub enum Statement {
     CreateIndex {
         name: String,
         table: String,
-        column: String,
+        columns: Vec<String>,  // v1.9.0: supports composite indexes
         unique: bool,
         index_type: crate::index::IndexType,
     },

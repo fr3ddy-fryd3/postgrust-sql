@@ -13,11 +13,12 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// Hash index using HashMap for O(1) lookups
+/// Supports single and composite keys (v1.9.0)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashIndex {
     pub name: String,
     pub table_name: String,
-    pub column_name: String,
+    pub column_names: Vec<String>,  // v1.9.0: supports composite
     pub is_unique: bool,
     /// Maps value hash → row indices
     /// For non-unique: multiple rows can have same value
@@ -25,25 +26,67 @@ pub struct HashIndex {
     map: HashMap<IndexKey, Vec<usize>>,
 }
 
+// Backward compatibility
+impl HashIndex {
+    /// Get first column name (for backward compatibility)
+    pub fn column_name(&self) -> &str {
+        &self.column_names[0]
+    }
+
+    /// Check if this is a composite index
+    pub fn is_composite(&self) -> bool {
+        self.column_names.len() > 1
+    }
+}
+
 /// Wrapper for Value to implement Hash + Eq
+/// Supports composite keys (v1.9.0)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct IndexKey(String);
 
+impl IndexKey {
+    /// Create key from single value
+    fn from_value(value: &Value) -> Self {
+        IndexKey(value.to_string())
+    }
+
+    /// Create composite key from multiple values (v1.9.0)
+    fn from_values(values: &[Value]) -> Self {
+        let parts: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+        IndexKey(parts.join("||"))
+    }
+}
+
+// Backward compatibility
 impl From<&Value> for IndexKey {
     fn from(value: &Value) -> Self {
-        // Convert all values to strings for hashing
-        // This is simple but works for all types
-        IndexKey(value.to_string())
+        Self::from_value(value)
     }
 }
 
 impl HashIndex {
-    /// Create a new hash index
+    /// Create a new hash index (single column)
     pub fn new(name: String, table_name: String, column_name: String, is_unique: bool) -> Self {
         Self {
             name,
             table_name,
-            column_name,
+            column_names: vec![column_name],
+            is_unique,
+            map: HashMap::new(),
+        }
+    }
+
+    /// Create a new composite hash index (v1.9.0)
+    pub fn new_composite(
+        name: String,
+        table_name: String,
+        column_names: Vec<String>,
+        is_unique: bool,
+    ) -> Self {
+        Self {
+            name,
+            table_name,
+            column_names,
             is_unique,
             map: HashMap::new(),
         }
@@ -98,6 +141,58 @@ impl HashIndex {
     /// Get total number of entries (including duplicates for non-unique)
     pub fn entry_count(&self) -> usize {
         self.map.values().map(|v| v.len()).sum()
+    }
+
+    // === Composite index methods (v1.9.0) ===
+
+    /// Insert composite key into index - O(1) average case
+    pub fn insert_composite(&mut self, values: &[Value], row_index: usize) -> Result<(), DatabaseError> {
+        if values.len() != self.column_names.len() {
+            return Err(DatabaseError::ParseError(
+                format!("Expected {} values for composite index, got {}",
+                    self.column_names.len(), values.len())
+            ));
+        }
+
+        let key = IndexKey::from_values(values);
+
+        // Check unique constraint
+        if self.is_unique && self.map.contains_key(&key) {
+            return Err(DatabaseError::UniqueViolation(format!(
+                "Duplicate key value violates unique constraint \"{}\"",
+                self.name
+            )));
+        }
+
+        // Insert into hash map
+        self.map.entry(key).or_insert_with(Vec::new).push(row_index);
+        Ok(())
+    }
+
+    /// Delete composite key from index
+    pub fn delete_composite(&mut self, values: &[Value], row_index: usize) {
+        if values.len() != self.column_names.len() {
+            return;
+        }
+
+        let key = IndexKey::from_values(values);
+
+        if let Some(indices) = self.map.get_mut(&key) {
+            indices.retain(|&idx| idx != row_index);
+            if indices.is_empty() {
+                self.map.remove(&key);
+            }
+        }
+    }
+
+    /// Search for rows with composite key match - O(1) average case
+    pub fn search_composite(&self, values: &[Value]) -> Vec<usize> {
+        if values.len() != self.column_names.len() {
+            return Vec::new();
+        }
+
+        let key = IndexKey::from_values(values);
+        self.map.get(&key).cloned().unwrap_or_default()
     }
 }
 

@@ -261,10 +261,10 @@ pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
     let (input, _) = ws(tag_no_case("ON"))(input)?;
     let (input, table) = ws(identifier)(input)?;
 
-    // Column in parentheses
-    let (input, column) = delimited(
+    // Column(s) in parentheses - v1.9.0: supports comma-separated list
+    let (input, columns) = delimited(
         ws(char('(')),
-        ws(identifier),
+        separated_list1(ws(char(',')), ws(identifier)),
         ws(char(')'))
     )(input)?;
 
@@ -285,7 +285,7 @@ pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
     Ok((input, Statement::CreateIndex {
         name,
         table,
-        column,
+        columns,
         unique,
         index_type,
     }))

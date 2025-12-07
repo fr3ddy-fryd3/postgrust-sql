@@ -11,13 +11,13 @@ pub struct IndexExecutor;
 impl IndexExecutor {
     /// Execute CREATE INDEX
     ///
-    /// Creates a B-tree or Hash index on specified column.
+    /// Creates a B-tree or Hash index on specified column(s) - v1.9.0 supports composite
     /// Populates index with existing data from table.
     pub fn create_index(
         db: &mut Database,
         name: String,
         table_name: String,
-        column_name: String,
+        column_names: Vec<String>,
         unique: bool,
         index_type: IndexType,
     ) -> Result<QueryResult, DatabaseError> {
@@ -32,43 +32,82 @@ impl IndexExecutor {
         let table = db.get_table(&table_name)
             .ok_or_else(|| DatabaseError::TableNotFound(table_name.clone()))?;
 
-        // Find column index
-        let column_idx = table.columns.iter()
-            .position(|c| c.name == column_name)
-            .ok_or_else(|| DatabaseError::ColumnNotFound(column_name.clone()))?;
+        // Validate all columns exist and get their indices
+        let mut column_indices = Vec::new();
+        for col_name in &column_names {
+            let col_idx = table.columns.iter()
+                .position(|c| &c.name == col_name)
+                .ok_or_else(|| DatabaseError::ColumnNotFound(col_name.clone()))?;
+            column_indices.push(col_idx);
+        }
 
-        // Create index based on type
-        let mut index = match index_type {
-            IndexType::BTree => {
-                Index::BTree(BTreeIndex::new(
-                    name.clone(),
-                    table_name.clone(),
-                    column_name.clone(),
-                    unique,
-                ))
+        let is_composite = column_names.len() > 1;
+
+        // Create index based on type and column count
+        let mut index = if is_composite {
+            // Composite index
+            match index_type {
+                IndexType::BTree => {
+                    Index::BTree(BTreeIndex::new_composite(
+                        name.clone(),
+                        table_name.clone(),
+                        column_names.clone(),
+                        unique,
+                    ))
+                }
+                IndexType::Hash => {
+                    Index::Hash(HashIndex::new_composite(
+                        name.clone(),
+                        table_name.clone(),
+                        column_names.clone(),
+                        unique,
+                    ))
+                }
             }
-            IndexType::Hash => {
-                Index::Hash(HashIndex::new(
-                    name.clone(),
-                    table_name.clone(),
-                    column_name.clone(),
-                    unique,
-                ))
+        } else {
+            // Single column index
+            match index_type {
+                IndexType::BTree => {
+                    Index::BTree(BTreeIndex::new(
+                        name.clone(),
+                        table_name.clone(),
+                        column_names[0].clone(),
+                        unique,
+                    ))
+                }
+                IndexType::Hash => {
+                    Index::Hash(HashIndex::new(
+                        name.clone(),
+                        table_name.clone(),
+                        column_names[0].clone(),
+                        unique,
+                    ))
+                }
             }
         };
 
         // Populate index with existing data
         for (row_idx, row) in table.rows.iter().enumerate() {
-            let value = &row.values[column_idx];
-            index.insert(value, row_idx)?;
+            if is_composite {
+                // Extract values for all indexed columns
+                let values: Vec<_> = column_indices.iter()
+                    .map(|&idx| row.values[idx].clone())
+                    .collect();
+                index.insert_composite(&values, row_idx)?;
+            } else {
+                // Single column
+                let value = &row.values[column_indices[0]];
+                index.insert(value, row_idx)?;
+            }
         }
 
         // Store index
         db.indexes.insert(name.clone(), index);
 
+        let columns_str = column_names.join(", ");
         Ok(QueryResult::Success(format!(
-            "Index '{}' created on {}.{} using {}",
-            name, table_name, column_name, index_type.as_str()
+            "Index '{}' created on {}.({}) using {}",
+            name, table_name, columns_str, index_type.as_str()
         )))
     }
 
