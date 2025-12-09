@@ -2,6 +2,10 @@
 
 Guidance for Claude Code when working with this repository.
 
+## ВАЖНО
+**НЕ СОЗДАВАТЬ НИКОМУ НАХУЙ НЕ НУЖНЫЕ .MD ФАЙЛЫ, КОТОРЫЕ ЗАСОРЯЮТ РЕПОЗИТОРИЙ!**
+Только ROADMAP.md и README.md!
+
 ## Quick Start
 
 **Run:**
