@@ -176,6 +176,19 @@ impl QueryExecutor {
                 let db_storage_ref = database_storage.as_deref();
                 QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, db_storage_ref)
             }
+            // Set operations (v1.10.0)
+            Statement::Union { left, right, all } => {
+                let db_storage_ref = database_storage.as_deref();
+                QueriesExecutor::union(db, &*left, &*right, all, tx_manager, db_storage_ref)
+            }
+            Statement::Intersect { left, right } => {
+                let db_storage_ref = database_storage.as_deref();
+                QueriesExecutor::intersect(db, &*left, &*right, tx_manager, db_storage_ref)
+            }
+            Statement::Except { left, right } => {
+                let db_storage_ref = database_storage.as_deref();
+                QueriesExecutor::except(db, &*left, &*right, tx_manager, db_storage_ref)
+            }
             Statement::CreateIndex { name, table, columns, unique, index_type } => {
                 super::index::IndexExecutor::create_index(db, name, table, columns, unique, index_type)
             }

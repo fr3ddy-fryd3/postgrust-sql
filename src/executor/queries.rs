@@ -3,13 +3,32 @@
 /// SELECT, JOIN, aggregate functions, GROUP BY
 
 use crate::types::{Database, DatabaseError, Row, Table, Value};
-use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder};
+use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression};
 use crate::transaction::TransactionManager;
 use super::legacy_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
 use crate::index::Index;
 
 pub struct QueryExecutor;
+
+impl QueryExecutor {
+    /// Evaluate CASE expression for a given row (v1.10.0)
+    fn evaluate_case(
+        case_expr: &CaseExpression,
+        columns: &[crate::types::Column],
+        row: &Row,
+    ) -> Result<Value, DatabaseError> {
+        // Evaluate each WHEN clause
+        for when in &case_expr.when_clauses {
+            if ConditionEvaluator::evaluate_with_columns(columns, row, &when.condition)? {
+                return Ok(when.result.clone());
+            }
+        }
+
+        // If no WHEN matched, return ELSE or NULL
+        Ok(case_expr.else_value.clone().unwrap_or(Value::Null))
+    }
+}
 
 impl QueryExecutor {
     /// Find usable index for WHERE condition (v1.9.0: supports composite indexes)
@@ -162,23 +181,27 @@ impl QueryExecutor {
             .get_table(&from)
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
 
-        // Extract regular column names
-        let col_names: Vec<String> = columns
-            .iter()
-            .map(|col| match col {
-                SelectColumn::Regular(name) => name.clone(),
+        // Separate regular columns from CASE expressions (v1.10.0)
+        let mut regular_col_names: Vec<String> = Vec::new();
+        let mut case_expressions: Vec<(usize, &CaseExpression)> = Vec::new();
+
+        for (idx, col) in columns.iter().enumerate() {
+            match col {
+                SelectColumn::Regular(name) => regular_col_names.push(name.clone()),
+                SelectColumn::Case(case_expr) => case_expressions.push((idx, case_expr)),
                 SelectColumn::Aggregate(_) => {
                     panic!("Aggregate in regular select should not happen")
                 }
-            })
-            .collect();
+            }
+        }
 
-        let is_select_all = col_names.len() == 1 && col_names[0] == "*";
+        let is_select_all = regular_col_names.len() == 1 && regular_col_names.is_empty() == false && regular_col_names[0] == "*";
 
-        let column_indices: Vec<usize> = if is_select_all {
+        // Only process regular columns for indices
+        let column_indices: Vec<usize> = if is_select_all && case_expressions.is_empty() {
             (0..table.columns.len()).collect()
         } else {
-            col_names
+            regular_col_names
                 .iter()
                 .map(|col| {
                     table
@@ -188,10 +211,16 @@ impl QueryExecutor {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        let column_names: Vec<String> = column_indices
+        // Build column names for result (include CASE aliases)
+        let mut column_names: Vec<String> = column_indices
             .iter()
             .map(|&idx| table.columns[idx].name.clone())
             .collect();
+
+        // Add CASE expression column names (use alias or "case")
+        for (_, case_expr) in &case_expressions {
+            column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
+        }
 
         // Get current transaction ID for visibility checks (MVCC)
         let current_tx_id = tx_manager.current_tx_id();
@@ -261,10 +290,18 @@ impl QueryExecutor {
                     }
                 }
 
-                let result_row: Vec<String> = column_indices
+                // Build result row: regular columns + CASE expressions
+                let mut result_row: Vec<String> = column_indices
                     .iter()
                     .map(|&idx| row.values[idx].to_string())
                     .collect();
+
+                // Evaluate CASE expressions (v1.10.0)
+                for (_, case_expr) in &case_expressions {
+                    let case_value = Self::evaluate_case(case_expr, &table.columns, row)?;
+                    result_row.push(case_value.to_string());
+                }
+
                 rows_with_data.push((row.clone(), result_row));
             }
         } else {
@@ -281,10 +318,18 @@ impl QueryExecutor {
                     }
                 }
 
-                let result_row: Vec<String> = column_indices
+                // Build result row: regular columns + CASE expressions
+                let mut result_row: Vec<String> = column_indices
                     .iter()
                     .map(|&idx| row.values[idx].to_string())
                     .collect();
+
+                // Evaluate CASE expressions (v1.10.0)
+                for (_, case_expr) in &case_expressions {
+                    let case_value = Self::evaluate_case(case_expr, &table.columns, row)?;
+                    result_row.push(case_value.to_string());
+                }
+
                 rows_with_data.push((row.clone(), result_row));
             }
         }
@@ -403,6 +448,11 @@ impl QueryExecutor {
                 SelectColumn::Regular(_) => {
                     return Err(DatabaseError::ParseError(
                         "Cannot mix aggregates with regular columns without GROUP BY".to_string(),
+                    ));
+                }
+                SelectColumn::Case(_) => {
+                    return Err(DatabaseError::ParseError(
+                        "Cannot use CASE expressions with aggregates without GROUP BY".to_string(),
                     ));
                 }
             }
@@ -640,6 +690,10 @@ impl QueryExecutor {
                     let (_, name) = Self::compute_aggregate(agg_func, table, &[])?;
                     column_names.push(name);
                 }
+                SelectColumn::Case(case_expr) => {
+                    // CASE expressions are allowed in GROUP BY context (v1.10.0)
+                    column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
+                }
             }
         }
 
@@ -657,6 +711,16 @@ impl QueryExecutor {
                     SelectColumn::Aggregate(agg_func) => {
                         let (value, _) = Self::compute_aggregate(agg_func, table, &group_rows)?;
                         row_values.push(value);
+                    }
+                    SelectColumn::Case(case_expr) => {
+                        // Evaluate CASE expression on first row of group (v1.10.0)
+                        // In GROUP BY context, CASE should be deterministic per group
+                        if let Some(first_row) = group_rows.first() {
+                            let case_value = Self::evaluate_case(case_expr, &table.columns, first_row)?;
+                            row_values.push(case_value.to_string());
+                        } else {
+                            row_values.push("NULL".to_string());
+                        }
                     }
                 }
             }
@@ -868,5 +932,158 @@ impl QueryExecutor {
         // For simplicity, return all columns for now
         // TODO: Filter by selected columns
         Ok(QueryResult::Rows(result_rows, combined_columns))
+    }
+
+    /// UNION: Combine results from two queries (v1.10.0)
+    ///
+    /// UNION removes duplicates, UNION ALL keeps duplicates
+    pub fn union(
+        db: &Database,
+        left: &crate::parser::Statement,
+        right: &crate::parser::Statement,
+        all: bool,
+        tx_manager: &TransactionManager,
+        database_storage: Option<&crate::storage::DatabaseStorage>,
+    ) -> Result<QueryResult, DatabaseError> {
+        // Execute both queries
+        let left_result = Self::execute_query_stmt(db, left, tx_manager, database_storage)?;
+        let right_result = Self::execute_query_stmt(db, right, tx_manager, database_storage)?;
+
+        let (mut left_rows, left_cols) = match left_result {
+            QueryResult::Rows(rows, cols) => (rows, cols),
+            _ => return Err(DatabaseError::ParseError("UNION requires SELECT queries".to_string())),
+        };
+
+        let (right_rows, right_cols) = match right_result {
+            QueryResult::Rows(rows, cols) => (rows, cols),
+            _ => return Err(DatabaseError::ParseError("UNION requires SELECT queries".to_string())),
+        };
+
+        // Check column compatibility
+        if left_cols.len() != right_cols.len() {
+            return Err(DatabaseError::ParseError(
+                format!("UNION queries must have same number of columns: {} vs {}", left_cols.len(), right_cols.len())
+            ));
+        }
+
+        // Combine results
+        left_rows.extend(right_rows);
+
+        // Remove duplicates if not UNION ALL
+        if !all {
+            use std::collections::HashSet;
+            let mut seen: HashSet<Vec<String>> = HashSet::new();
+            left_rows.retain(|row| seen.insert(row.clone()));
+        }
+
+        Ok(QueryResult::Rows(left_rows, left_cols))
+    }
+
+    /// INTERSECT: Return rows that appear in both queries (v1.10.0)
+    pub fn intersect(
+        db: &Database,
+        left: &crate::parser::Statement,
+        right: &crate::parser::Statement,
+        tx_manager: &TransactionManager,
+        database_storage: Option<&crate::storage::DatabaseStorage>,
+    ) -> Result<QueryResult, DatabaseError> {
+        // Execute both queries
+        let left_result = Self::execute_query_stmt(db, left, tx_manager, database_storage)?;
+        let right_result = Self::execute_query_stmt(db, right, tx_manager, database_storage)?;
+
+        let (left_rows, left_cols) = match left_result {
+            QueryResult::Rows(rows, cols) => (rows, cols),
+            _ => return Err(DatabaseError::ParseError("INTERSECT requires SELECT queries".to_string())),
+        };
+
+        let (right_rows, right_cols) = match right_result {
+            QueryResult::Rows(rows, cols) => (rows, cols),
+            _ => return Err(DatabaseError::ParseError("INTERSECT requires SELECT queries".to_string())),
+        };
+
+        // Check column compatibility
+        if left_cols.len() != right_cols.len() {
+            return Err(DatabaseError::ParseError(
+                format!("INTERSECT queries must have same number of columns: {} vs {}", left_cols.len(), right_cols.len())
+            ));
+        }
+
+        // Find intersection using HashSet
+        use std::collections::HashSet;
+        let right_set: HashSet<Vec<String>> = right_rows.into_iter().collect();
+        let result_rows: Vec<Vec<String>> = left_rows
+            .into_iter()
+            .filter(|row| right_set.contains(row))
+            .collect::<HashSet<_>>()  // Remove duplicates
+            .into_iter()
+            .collect();
+
+        Ok(QueryResult::Rows(result_rows, left_cols))
+    }
+
+    /// EXCEPT: Return rows from left query that don't appear in right query (v1.10.0)
+    pub fn except(
+        db: &Database,
+        left: &crate::parser::Statement,
+        right: &crate::parser::Statement,
+        tx_manager: &TransactionManager,
+        database_storage: Option<&crate::storage::DatabaseStorage>,
+    ) -> Result<QueryResult, DatabaseError> {
+        // Execute both queries
+        let left_result = Self::execute_query_stmt(db, left, tx_manager, database_storage)?;
+        let right_result = Self::execute_query_stmt(db, right, tx_manager, database_storage)?;
+
+        let (left_rows, left_cols) = match left_result {
+            QueryResult::Rows(rows, cols) => (rows, cols),
+            _ => return Err(DatabaseError::ParseError("EXCEPT requires SELECT queries".to_string())),
+        };
+
+        let (right_rows, right_cols) = match right_result {
+            QueryResult::Rows(rows, cols) => (rows, cols),
+            _ => return Err(DatabaseError::ParseError("EXCEPT requires SELECT queries".to_string())),
+        };
+
+        // Check column compatibility
+        if left_cols.len() != right_cols.len() {
+            return Err(DatabaseError::ParseError(
+                format!("EXCEPT queries must have same number of columns: {} vs {}", left_cols.len(), right_cols.len())
+            ));
+        }
+
+        // Find difference using HashSet
+        use std::collections::HashSet;
+        let right_set: HashSet<Vec<String>> = right_rows.into_iter().collect();
+        let result_rows: Vec<Vec<String>> = left_rows
+            .into_iter()
+            .filter(|row| !right_set.contains(row))
+            .collect::<HashSet<_>>()  // Remove duplicates
+            .into_iter()
+            .collect();
+
+        Ok(QueryResult::Rows(result_rows, left_cols))
+    }
+
+    /// Helper: Execute a Statement that should be a query
+    fn execute_query_stmt(
+        db: &Database,
+        stmt: &crate::parser::Statement,
+        tx_manager: &TransactionManager,
+        database_storage: Option<&crate::storage::DatabaseStorage>,
+    ) -> Result<QueryResult, DatabaseError> {
+        match stmt {
+            crate::parser::Statement::Select { distinct, columns, from, joins, filter, group_by, order_by, limit, offset } => {
+                Self::select(db, *distinct, columns.clone(), from.clone(), joins.clone(), filter.clone(), group_by.clone(), order_by.clone(), *limit, *offset, tx_manager, database_storage)
+            }
+            crate::parser::Statement::Union { left, right, all } => {
+                Self::union(db, left, right, *all, tx_manager, database_storage)
+            }
+            crate::parser::Statement::Intersect { left, right } => {
+                Self::intersect(db, left, right, tx_manager, database_storage)
+            }
+            crate::parser::Statement::Except { left, right } => {
+                Self::except(db, left, right, tx_manager, database_storage)
+            }
+            _ => Err(DatabaseError::ParseError("Not a query statement".to_string())),
+        }
     }
 }

@@ -29,6 +29,20 @@ pub enum Statement {
         limit: Option<usize>,
         offset: Option<usize>,
     },
+    /// Set operations (v1.10.0)
+    Union {
+        left: Box<Statement>,
+        right: Box<Statement>,
+        all: bool,  // UNION ALL if true, UNION (DISTINCT) if false
+    },
+    Intersect {
+        left: Box<Statement>,
+        right: Box<Statement>,
+    },
+    Except {
+        left: Box<Statement>,
+        right: Box<Statement>,
+    },
     Update {
         table: String,
         assignments: Vec<(String, crate::types::Value)>,
@@ -155,10 +169,25 @@ pub enum SortOrder {
     Desc,
 }
 
+/// CASE expression (v1.10.0)
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseExpression {
+    pub when_clauses: Vec<WhenClause>,      // WHEN conditions
+    pub else_value: Option<crate::types::Value>, // ELSE value (optional)
+    pub alias: Option<String>,               // AS alias (optional)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhenClause {
+    pub condition: Condition,                // WHEN condition
+    pub result: crate::types::Value,         // THEN result
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelectColumn {
     Regular(String),              // Regular column name or *
     Aggregate(AggregateFunction), // Aggregate function
+    Case(CaseExpression),         // CASE expression (v1.10.0)
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -14,6 +14,7 @@ cargo test                                 # 147 tests (4 known failures in stor
 ./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
 ./tests/integration/test_extended_operators.sh  # Test extended WHERE operators
 ./tests/integration/test_explain.sh        # Test EXPLAIN command
+./tests/integration/test_sql_expressions.sh # Test CASE & set operations (v1.10.0)
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 ```
 
@@ -27,7 +28,8 @@ printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 - VACUUM command for MVCC cleanup (v1.5.1)
 - B-tree & Hash indexes with automatic query optimization (v1.7.0)
 - Extended WHERE operators (>=, <=, BETWEEN, LIKE, IN, IS NULL) + EXPLAIN (v1.8.0)
-- **Composite (multi-column) indexes with AND query optimization (v1.9.0)** ✨
+- Composite (multi-column) indexes with AND query optimization (v1.9.0)
+- **CASE expressions, UNION/INTERSECT/EXCEPT set operations (v1.10.0)** ✨
 
 ## Architecture (v1.9.0)
 
@@ -102,6 +104,21 @@ SELECT * FROM products WHERE price BETWEEN 100 AND 500;
 SELECT * FROM users WHERE name LIKE 'A%';            -- % = any chars, _ = single char
 SELECT * FROM orders WHERE status IN ('pending', 'shipped');
 SELECT * FROM users WHERE email IS NOT NULL;
+
+-- CASE Expressions (v1.10.0)
+SELECT name, age,
+    CASE
+        WHEN age < 18 THEN 'minor'
+        WHEN age < 65 THEN 'adult'
+        ELSE 'senior'
+    END AS category
+FROM users;
+
+-- Set Operations (v1.10.0)
+SELECT name FROM customers UNION SELECT name FROM suppliers;       -- Remove duplicates
+SELECT name FROM customers UNION ALL SELECT name FROM suppliers;   -- Keep duplicates
+SELECT name FROM customers INTERSECT SELECT name FROM suppliers;   -- Common rows
+SELECT name FROM customers EXCEPT SELECT name FROM suppliers;      -- In left, not in right
 
 -- Types
 CREATE TYPE mood AS ENUM ('happy', 'sad');
@@ -287,8 +304,9 @@ QUERY PLAN
 
 ## Версионирование
 
-**Current**: v1.9.0 (Composite multi-column indexes)
+**Current**: v1.10.0 (CASE expressions & Set operations)
 **Previous**:
+- v1.9.0 - Composite multi-column indexes
 - v1.8.0 - Extended WHERE operators + EXPLAIN command
 - v1.7.0 - Hash indexes with USING clause
 - v1.6.0 - B-tree indexes with query optimization

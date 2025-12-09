@@ -20,6 +20,8 @@ pub use statement::{
     JoinType,
     JoinClause,
     PrivilegeType,
+    CaseExpression,  // v1.10.0
+    WhenClause,      // v1.10.0
 };
 
 // Main parser function that combines all parsers
@@ -262,6 +264,63 @@ mod tests {
                 assert_eq!(name, "idx_age");
             }
             _ => panic!("Expected DROP INDEX"),
+        }
+    }
+
+    #[test]
+    fn test_parse_case_simple() {
+        let sql = "SELECT name, CASE WHEN age < 18 THEN 'minor' ELSE 'adult' END FROM users";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::Select { columns, .. } => {
+                assert_eq!(columns.len(), 2);
+                match &columns[1] {
+                    SelectColumn::Case(case_expr) => {
+                        assert_eq!(case_expr.when_clauses.len(), 1);
+                        assert!(case_expr.else_value.is_some());
+                    }
+                    _ => panic!("Expected CASE expression"),
+                }
+            }
+            _ => panic!("Expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn test_parse_case_multiple_when() {
+        let sql = "SELECT CASE WHEN age < 18 THEN 'minor' WHEN age < 65 THEN 'adult' ELSE 'senior' END AS category FROM users";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::Select { columns, .. } => {
+                assert_eq!(columns.len(), 1);
+                match &columns[0] {
+                    SelectColumn::Case(case_expr) => {
+                        assert_eq!(case_expr.when_clauses.len(), 2);
+                        assert!(case_expr.else_value.is_some());
+                        assert_eq!(case_expr.alias, Some("category".to_string()));
+                    }
+                    _ => panic!("Expected CASE expression"),
+                }
+            }
+            _ => panic!("Expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn test_parse_case_no_else() {
+        let sql = "SELECT CASE WHEN status = 'active' THEN 'Y' END FROM users";
+        let stmt = parse_statement(sql).unwrap();
+        match stmt {
+            Statement::Select { columns, .. } => {
+                match &columns[0] {
+                    SelectColumn::Case(case_expr) => {
+                        assert_eq!(case_expr.when_clauses.len(), 1);
+                        assert!(case_expr.else_value.is_none());
+                    }
+                    _ => panic!("Expected CASE expression"),
+                }
+            }
+            _ => panic!("Expected SELECT"),
         }
     }
 }

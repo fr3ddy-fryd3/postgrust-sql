@@ -1,7 +1,7 @@
 use super::common::{ws, identifier, value};
 use super::statement::{
     Statement, Condition, SelectColumn, AggregateFunction, CountTarget,
-    JoinClause, JoinType, SortOrder,
+    JoinClause, JoinType, SortOrder, CaseExpression, WhenClause,
 };
 use nom::{
     branch::alt,
@@ -168,9 +168,42 @@ fn aggregate_function(input: &str) -> IResult<&str, AggregateFunction> {
     ))(input)
 }
 
-// Parse select column: either regular column/*, or aggregate function
+// Parse WHEN clause: WHEN condition THEN value
+fn when_clause(input: &str) -> IResult<&str, WhenClause> {
+    let (input, _) = ws(tag_no_case("WHEN"))(input)?;
+    let (input, cond) = condition(input)?;
+    let (input, _) = ws(tag_no_case("THEN"))(input)?;
+    let (input, result) = ws(value)(input)?;
+
+    Ok((input, WhenClause { condition: cond, result }))
+}
+
+// Parse CASE expression: CASE WHEN ... THEN ... [WHEN ... THEN ...] [ELSE ...] END [AS alias]
+fn case_expression(input: &str) -> IResult<&str, CaseExpression> {
+    let (input, _) = ws(tag_no_case("CASE"))(input)?;
+
+    // Parse one or more WHEN clauses
+    let (input, when_clauses) = nom::multi::many1(when_clause)(input)?;
+
+    // Parse optional ELSE clause
+    let (input, else_value) = opt(preceded(ws(tag_no_case("ELSE")), ws(value)))(input)?;
+
+    let (input, _) = ws(tag_no_case("END"))(input)?;
+
+    // Parse optional AS alias
+    let (input, alias) = opt(preceded(ws(tag_no_case("AS")), ws(identifier)))(input)?;
+
+    Ok((input, CaseExpression {
+        when_clauses,
+        else_value,
+        alias,
+    }))
+}
+
+// Parse select column: either regular column/*, aggregate function, or CASE expression
 fn select_column(input: &str) -> IResult<&str, SelectColumn> {
     alt((
+        map(case_expression, SelectColumn::Case),
         map(aggregate_function, SelectColumn::Aggregate),
         map(
             alt((map(ws(char('*')), |_| "*".to_string()), identifier)),
@@ -268,7 +301,8 @@ pub fn offset(input: &str) -> IResult<&str, Option<usize>> {
     ))(input)
 }
 
-pub fn select(input: &str) -> IResult<&str, Statement> {
+// Parse base SELECT (without set operations)
+fn select_base(input: &str) -> IResult<&str, Statement> {
     let (input, _) = ws(tag_no_case("SELECT"))(input)?;
 
     // Parse optional DISTINCT keyword
@@ -310,4 +344,57 @@ pub fn select(input: &str) -> IResult<&str, Statement> {
             offset,
         },
     ))
+}
+
+// Parse SELECT with set operations (UNION/INTERSECT/EXCEPT) (v1.10.0)
+pub fn select(input: &str) -> IResult<&str, Statement> {
+    let (input, left) = select_base(input)?;
+
+    // Check for set operations
+    let (input, set_op) = opt(alt((
+        map(
+            tuple((
+                ws(tag_no_case("UNION")),
+                opt(ws(tag_no_case("ALL"))),
+            )),
+            |(_, all)| ("UNION", all.is_some()),
+        ),
+        map(ws(tag_no_case("INTERSECT")), |_| ("INTERSECT", false)),
+        map(ws(tag_no_case("EXCEPT")), |_| ("EXCEPT", false)),
+    )))(input)?;
+
+    match set_op {
+        Some(("UNION", all)) => {
+            let (input, right) = select(input)?;
+            Ok((
+                input,
+                Statement::Union {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    all,
+                },
+            ))
+        }
+        Some(("INTERSECT", _)) => {
+            let (input, right) = select(input)?;
+            Ok((
+                input,
+                Statement::Intersect {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            ))
+        }
+        Some(("EXCEPT", _)) => {
+            let (input, right) = select(input)?;
+            Ok((
+                input,
+                Statement::Except {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            ))
+        }
+        _ => Ok((input, left)),
+    }
 }
