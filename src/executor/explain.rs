@@ -101,7 +101,53 @@ impl ExplainExecutor {
         condition: &Condition,
         total_rows: usize,
     ) -> (ScanType, Option<(String, String)>, String, usize) {
-        // Extract simple equality/comparison from condition
+        // v1.9.0: Try composite index first (AND chain of Equals)
+        let mut equals_cols: Vec<&str> = Vec::new();
+        Self::extract_equals_columns(condition, &mut equals_cols);
+
+        if equals_cols.len() >= 2 {
+            // Multiple equality conditions - look for matching composite index
+            for (idx_name, index) in &db.indexes {
+                if index.table_name() != table_name || !index.is_composite() {
+                    continue;
+                }
+
+                let index_cols = index.column_names();
+                if index_cols.len() == equals_cols.len() {
+                    // Check if all index columns match
+                    let all_match = index_cols.iter().all(|ic| equals_cols.contains(&ic.as_str()));
+                    if all_match {
+                        let index_type_str = match index.index_type() {
+                            crate::index::IndexType::Hash => "hash",
+                            crate::index::IndexType::BTree => "btree",
+                        };
+
+                        let scan_type = if index.is_unique() {
+                            ScanType::UniqueIndexScan
+                        } else {
+                            ScanType::IndexScan
+                        };
+
+                        let cost = if index_type_str == "hash" {
+                            "O(1)"
+                        } else {
+                            "O(log n)"
+                        };
+
+                        let estimated = if index.is_unique() { 1 } else { total_rows / 10 };
+
+                        return (
+                            scan_type,
+                            Some((idx_name.clone(), index_type_str.to_string())),
+                            cost.to_string(),
+                            estimated,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Fall back to single-column index
         let (column, op) = match condition {
             Condition::Equals(col, _) => (col, "="),
             Condition::GreaterThan(col, _) => (col, ">"),
@@ -113,9 +159,9 @@ impl ExplainExecutor {
             _ => return (ScanType::SequentialScan, None, "O(n)".to_string(), total_rows),
         };
 
-        // Find index on this column
+        // Find single-column index on this column
         for (idx_name, index) in &db.indexes {
-            if index.table_name() == table_name && index.column_name() == column {
+            if index.table_name() == table_name && !index.is_composite() && index.column_name() == column {
                 let index_type_str = match index.index_type() {
                     crate::index::IndexType::Hash => "hash",
                     crate::index::IndexType::BTree => "btree",
@@ -210,6 +256,20 @@ impl ExplainExecutor {
 
         output.push_str("──────────────────────────────────────────────────");
         output
+    }
+
+    /// Extract column names from Equals conditions in AND chain (v1.9.0)
+    fn extract_equals_columns<'a>(cond: &'a Condition, result: &mut Vec<&'a str>) {
+        match cond {
+            Condition::Equals(col, _) => {
+                result.push(col.as_str());
+            }
+            Condition::And(left, right) => {
+                Self::extract_equals_columns(left, result);
+                Self::extract_equals_columns(right, result);
+            }
+            _ => {}
+        }
     }
 
     fn format_condition(cond: &Condition) -> String {

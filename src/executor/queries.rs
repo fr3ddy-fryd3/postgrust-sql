@@ -12,32 +12,89 @@ use crate::index::Index;
 pub struct QueryExecutor;
 
 impl QueryExecutor {
-    /// Find usable index for WHERE condition
+    /// Find usable index for WHERE condition (v1.9.0: supports composite indexes)
     ///
-    /// Returns (index_name, column_name, value) if:
-    /// - Filter is Equals(col, val) or GreaterThan/LessThan
-    /// - Index exists on that column
+    /// Returns Some for:
+    /// - Single column: Equals(col, val) or GreaterThan/LessThan
+    /// - Composite: AND of multiple Equals conditions matching index columns
     fn find_usable_index<'a>(
         db: &'a Database,
         table_name: &str,
         filter: &'a Option<Condition>,
-    ) -> Option<(&'a str, &'a Index, &'a str, &'a Value)> {
-        // Only optimize simple equality/range conditions (not AND/OR yet)
-        let (column, value) = match filter {
-            Some(Condition::Equals(col, val)) => (col, val),
-            Some(Condition::GreaterThan(col, val)) => (col, val),
-            Some(Condition::LessThan(col, val)) => (col, val),
-            _ => return None, // AND/OR/NotEquals require full scan
+    ) -> Option<(&'a str, &'a Index, Vec<(&'a str, &'a Value)>)> {
+        let filter = match filter {
+            Some(f) => f,
+            None => return None,
         };
 
-        // Find index on this column
+        // First, try to find composite index usage (v1.9.0)
+        // Check if filter is AND chain of Equals conditions
+        let mut equals_conditions: Vec<(&str, &Value)> = Vec::new();
+        Self::extract_equals_from_and(filter, &mut equals_conditions);
+
+        if equals_conditions.len() >= 2 {
+            // Multiple equality conditions - look for matching composite index
+            for (idx_name, index) in &db.indexes {
+                if index.table_name() != table_name || !index.is_composite() {
+                    continue;
+                }
+
+                let index_cols = index.column_names();
+                if index_cols.len() != equals_conditions.len() {
+                    continue; // Composite index must match all columns
+                }
+
+                // Check if all index columns are present in equals_conditions
+                let mut matched_values: Vec<(&str, &Value)> = Vec::new();
+                let mut all_matched = true;
+
+                for col_name in index_cols {
+                    if let Some((_col, val)) = equals_conditions.iter().find(|(c, _)| *c == col_name) {
+                        matched_values.push((col_name, val));
+                    } else {
+                        all_matched = false;
+                        break;
+                    }
+                }
+
+                if all_matched {
+                    return Some((idx_name, index, matched_values));
+                }
+            }
+        }
+
+        // Fall back to single-column index (existing logic)
+        let (column, value) = match filter {
+            Condition::Equals(col, val) => (col.as_str(), val),
+            Condition::GreaterThan(col, val) => (col.as_str(), val),
+            Condition::LessThan(col, val) => (col.as_str(), val),
+            _ => return None, // Other conditions require full scan
+        };
+
+        // Find single-column index
         for (idx_name, index) in &db.indexes {
-            if index.table_name() == table_name && index.column_name() == *column {
-                return Some((idx_name, index, column, value));
+            if index.table_name() == table_name && !index.is_composite() && index.column_name() == column {
+                return Some((idx_name, index, vec![(column, value)]));
             }
         }
 
         None
+    }
+
+    /// Extract Equals conditions from AND chain (v1.9.0)
+    fn extract_equals_from_and<'a>(cond: &'a Condition, result: &mut Vec<(&'a str, &'a Value)>) {
+        match cond {
+            Condition::Equals(col, val) => {
+                result.push((col.as_str(), val));
+            }
+            Condition::And(left, right) => {
+                Self::extract_equals_from_and(left, result);
+                Self::extract_equals_from_and(right, result);
+            }
+            _ => {
+                // Non-equals conditions stop composite index usage
+            }
+        }
     }
 
     /// Main SELECT dispatcher
@@ -162,10 +219,17 @@ impl QueryExecutor {
         // Collect rows with their original indices (for sorting)
         let mut rows_with_data: Vec<(Row, Vec<String>)> = Vec::new();
 
-        // Index scan vs sequential scan
-        if let Some((_idx_name, index, _col_name, search_value)) = use_index {
-            // INDEX SCAN: Use B-tree index for fast lookup
-            let row_indices = index.search(search_value);
+        // Index scan vs sequential scan (v1.9.0: supports composite indexes)
+        if let Some((_idx_name, index, col_values)) = use_index {
+            // INDEX SCAN: Use index for fast lookup (single or composite)
+            let row_indices = if index.is_composite() && col_values.len() > 1 {
+                // Composite index: extract values in column order
+                let values: Vec<Value> = col_values.iter().map(|(_, v)| (*v).clone()).collect();
+                index.search_composite(&values)
+            } else {
+                // Single column index
+                index.search(col_values[0].1)
+            };
 
             // Get all rows first (needed to access by index)
             let all_rows: Vec<Row> = if let Some(db_storage) = database_storage {

@@ -66,13 +66,26 @@ impl DmlExecutor {
         // Get row index (newly inserted row is at the end)
         let row_index = storage.count() - 1;
 
-        // Update all indexes on this table
-        for (idx_name, index) in indexes.iter_mut() {
+        // Update all indexes on this table (v1.9.0: supports composite)
+        for (_idx_name, index) in indexes.iter_mut() {
             if index.table_name() == table_name {
-                // Find column index for this index
-                if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
-                    let value = &ordered_values[col_idx];
-                    index.insert(value, row_index)?;
+                if index.is_composite() {
+                    // Composite index - extract all column values
+                    let mut index_values = Vec::new();
+                    for col_name in index.column_names() {
+                        if let Some(col_idx) = table_columns.iter().position(|c| &c.name == col_name) {
+                            index_values.push(ordered_values[col_idx].clone());
+                        }
+                    }
+                    if index_values.len() == index.column_names().len() {
+                        index.insert_composite(&index_values, row_index)?;
+                    }
+                } else {
+                    // Single column index
+                    if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
+                        let value = &ordered_values[col_idx];
+                        index.insert(value, row_index)?;
+                    }
                 }
             }
         }
@@ -375,17 +388,42 @@ impl DmlExecutor {
                 let new_row_idx = new_row_start_idx + new_idx;
                 let new_row = &all_rows_after[new_row_idx];
 
-                // Update all indexes on this table
+                // Update all indexes on this table (v1.9.0: supports composite)
                 for (_idx_name, index) in indexes.iter_mut() {
                     if index.table_name() == table_name {
-                        if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
-                            let old_value = &old_row.values[col_idx];
-                            let new_value = &new_row.values[col_idx];
+                        if index.is_composite() {
+                            // Composite index
+                            let mut old_values = Vec::new();
+                            let mut new_values = Vec::new();
+                            let mut changed = false;
 
-                            // Only update index if value changed
-                            if old_value != new_value {
-                                index.delete(old_value, *old_idx);
-                                index.insert(new_value, new_row_idx)?;
+                            for col_name in index.column_names() {
+                                if let Some(col_idx) = table_columns.iter().position(|c| &c.name == col_name) {
+                                    let old_val = &old_row.values[col_idx];
+                                    let new_val = &new_row.values[col_idx];
+                                    old_values.push(old_val.clone());
+                                    new_values.push(new_val.clone());
+                                    if old_val != new_val {
+                                        changed = true;
+                                    }
+                                }
+                            }
+
+                            if changed && old_values.len() == index.column_names().len() {
+                                index.delete_composite(&old_values, *old_idx);
+                                index.insert_composite(&new_values, new_row_idx)?;
+                            }
+                        } else {
+                            // Single column index
+                            if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
+                                let old_value = &old_row.values[col_idx];
+                                let new_value = &new_row.values[col_idx];
+
+                                // Only update index if value changed
+                                if old_value != new_value {
+                                    index.delete(old_value, *old_idx);
+                                    index.insert(new_value, new_row_idx)?;
+                                }
                             }
                         }
                     }
@@ -453,13 +491,27 @@ impl DmlExecutor {
         // Execute delete (MVCC: mark with xmax instead of physical removal)
         let deleted_count = storage.delete_where(predicate, current_tx_id)?;
 
-        // Update indexes: remove deleted entries
+        // Update indexes: remove deleted entries (v1.9.0: supports composite)
         for (row_idx, row) in deleted_indices {
             for (_idx_name, index) in indexes.iter_mut() {
                 if index.table_name() == table_name {
-                    if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
-                        let value = &row.values[col_idx];
-                        index.delete(value, row_idx);
+                    if index.is_composite() {
+                        // Composite index
+                        let mut values = Vec::new();
+                        for col_name in index.column_names() {
+                            if let Some(col_idx) = table_columns.iter().position(|c| &c.name == col_name) {
+                                values.push(row.values[col_idx].clone());
+                            }
+                        }
+                        if values.len() == index.column_names().len() {
+                            index.delete_composite(&values, row_idx);
+                        }
+                    } else {
+                        // Single column index
+                        if let Some(col_idx) = table_columns.iter().position(|c| c.name == index.column_name()) {
+                            let value = &row.values[col_idx];
+                            index.delete(value, row_idx);
+                        }
                     }
                 }
             }

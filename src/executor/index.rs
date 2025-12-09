@@ -164,7 +164,7 @@ mod tests {
             &mut db,
             "idx_id".to_string(),
             "users".to_string(),
-            "id".to_string(),
+            vec!["id".to_string()],
             false,
             IndexType::BTree,
         );
@@ -202,7 +202,7 @@ mod tests {
             &mut db,
             "idx_category".to_string(),
             "products".to_string(),
-            "category".to_string(),
+            vec!["category".to_string()],
             false,
             IndexType::Hash,
         );
@@ -236,7 +236,7 @@ mod tests {
             &mut db,
             "idx_id".to_string(),
             "users".to_string(),
-            "id".to_string(),
+            vec!["id".to_string()],
             false,
             IndexType::BTree,
         )
@@ -246,7 +246,7 @@ mod tests {
             &mut db,
             "idx_id".to_string(),
             "users".to_string(),
-            "id".to_string(),
+            vec!["id".to_string()],
             false,
             IndexType::BTree,
         );
@@ -275,7 +275,7 @@ mod tests {
             &mut db,
             "idx_id".to_string(),
             "users".to_string(),
-            "id".to_string(),
+            vec!["id".to_string()],
             false,
             IndexType::BTree,
         )
@@ -284,5 +284,162 @@ mod tests {
         let result = IndexExecutor::drop_index(&mut db, "idx_id".to_string());
         assert!(result.is_ok());
         assert!(!db.indexes.contains_key("idx_id"));
+    }
+
+    #[test]
+    fn test_create_composite_btree_index() {
+        let mut db = Database::new("test".to_string());
+
+        let columns = vec![
+            Column {
+                name: "city".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+            Column {
+                name: "age".to_string(),
+                data_type: DataType::Integer,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+        ];
+        let mut table = Table::new("users".to_string(), columns);
+        table.rows = vec![
+            Row::new(vec![Value::Text("NYC".to_string()), Value::Integer(30)]),
+            Row::new(vec![Value::Text("LA".to_string()), Value::Integer(25)]),
+            Row::new(vec![Value::Text("NYC".to_string()), Value::Integer(25)]),
+        ];
+        db.create_table(table).unwrap();
+
+        let result = IndexExecutor::create_index(
+            &mut db,
+            "idx_city_age".to_string(),
+            "users".to_string(),
+            vec!["city".to_string(), "age".to_string()],
+            false,
+            IndexType::BTree,
+        );
+
+        assert!(result.is_ok());
+        assert!(db.indexes.contains_key("idx_city_age"));
+
+        let index = &db.indexes["idx_city_age"];
+        assert!(index.is_composite());
+        assert_eq!(index.column_names().len(), 2);
+
+        // Test composite search
+        let results = index.search_composite(&vec![
+            Value::Text("NYC".to_string()),
+            Value::Integer(30),
+        ]);
+        assert_eq!(results, vec![0]);
+    }
+
+    #[test]
+    fn test_create_composite_hash_index() {
+        let mut db = Database::new("test".to_string());
+
+        let columns = vec![
+            Column {
+                name: "first_name".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+            Column {
+                name: "last_name".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+        ];
+        let mut table = Table::new("people".to_string(), columns);
+        table.rows = vec![
+            Row::new(vec![Value::Text("John".to_string()), Value::Text("Doe".to_string())]),
+            Row::new(vec![Value::Text("Jane".to_string()), Value::Text("Smith".to_string())]),
+            Row::new(vec![Value::Text("John".to_string()), Value::Text("Smith".to_string())]),
+        ];
+        db.create_table(table).unwrap();
+
+        let result = IndexExecutor::create_index(
+            &mut db,
+            "idx_name".to_string(),
+            "people".to_string(),
+            vec!["first_name".to_string(), "last_name".to_string()],
+            false,
+            IndexType::Hash,
+        );
+
+        assert!(result.is_ok());
+        assert!(db.indexes.contains_key("idx_name"));
+
+        let index = &db.indexes["idx_name"];
+        assert!(index.is_composite());
+
+        // Test composite hash search
+        let results = index.search_composite(&vec![
+            Value::Text("John".to_string()),
+            Value::Text("Doe".to_string()),
+        ]);
+        assert_eq!(results, vec![0]);
+
+        let results2 = index.search_composite(&vec![
+            Value::Text("John".to_string()),
+            Value::Text("Smith".to_string()),
+        ]);
+        assert_eq!(results2, vec![2]);
+    }
+
+    #[test]
+    fn test_composite_unique_index() {
+        let mut db = Database::new("test".to_string());
+
+        let columns = vec![
+            Column {
+                name: "email".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+            Column {
+                name: "provider".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+                unique: false,
+                foreign_key: None,
+            },
+        ];
+        let mut table = Table::new("accounts".to_string(), columns);
+        table.rows = vec![
+            Row::new(vec![Value::Text("user@example.com".to_string()), Value::Text("google".to_string())]),
+        ];
+        db.create_table(table).unwrap();
+
+        let result = IndexExecutor::create_index(
+            &mut db,
+            "idx_email_provider".to_string(),
+            "accounts".to_string(),
+            vec!["email".to_string(), "provider".to_string()],
+            true, // unique
+            IndexType::BTree,
+        );
+
+        assert!(result.is_ok());
+
+        let index = &db.indexes["idx_email_provider"];
+        assert!(index.is_unique());
+        assert!(index.is_composite());
     }
 }

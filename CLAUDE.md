@@ -8,9 +8,10 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release                        # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 144 tests (4 known failures in storage)
+cargo test                                 # 147 tests (4 known failures in storage)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
+./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
 ./tests/integration/test_extended_operators.sh  # Test extended WHERE operators
 ./tests/integration/test_explain.sh        # Test EXPLAIN command
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
@@ -25,9 +26,10 @@ printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 - Page-based storage (v1.5.0, 125x write amplification improvement)
 - VACUUM command for MVCC cleanup (v1.5.1)
 - B-tree & Hash indexes with automatic query optimization (v1.7.0)
-- **Extended WHERE operators (>=, <=, BETWEEN, LIKE, IN, IS NULL) + EXPLAIN (v1.8.0)** ✨
+- Extended WHERE operators (>=, <=, BETWEEN, LIKE, IN, IS NULL) + EXPLAIN (v1.8.0)
+- **Composite (multi-column) indexes with AND query optimization (v1.9.0)** ✨
 
-## Architecture (v1.8.0)
+## Architecture (v1.9.0)
 
 ### Модульная структура:
 ```
@@ -44,9 +46,9 @@ src/
 │   ├── index.rs           # CREATE/DROP INDEX (v1.7.0)
 │   ├── explain.rs         # EXPLAIN query analyzer (v1.8.0)
 │   └── legacy.rs          # Minimal dispatcher (146 lines)
-├── index/         # Index implementations (v1.7.0)
-│   ├── btree.rs           # BTreeIndex O(log n) - supports range queries
-│   ├── hash.rs            # HashIndex O(1) - equality only
+├── index/         # Index implementations (v1.7.0, v1.9.0: composite support)
+│   ├── btree.rs           # BTreeIndex O(log n) - single & composite
+│   ├── hash.rs            # HashIndex O(1) - single & composite
 │   └── mod.rs             # IndexType enum and Index wrapper
 ├── transaction/   # TransactionManager, Snapshot
 ├── storage/       # Binary save/load, WAL, Page-based (v1.5.0)
@@ -105,15 +107,22 @@ SELECT * FROM users WHERE email IS NOT NULL;
 CREATE TYPE mood AS ENUM ('happy', 'sad');
 CREATE TABLE person (id SERIAL, m mood, data JSONB, uuid UUID);
 
--- Indexes (v1.7.0)
-CREATE INDEX idx_age ON users(age);                    -- Default: B-tree
-CREATE INDEX idx_category ON products(category) USING HASH;  -- Hash index
-CREATE UNIQUE INDEX idx_email ON users(email) USING BTREE;   -- Explicit B-tree
+-- Indexes (v1.7.0, v1.9.0: composite support)
+CREATE INDEX idx_age ON users(age);                    -- Single-column B-tree
+CREATE INDEX idx_category ON products(category) USING HASH;  -- Single-column hash
+CREATE UNIQUE INDEX idx_email ON users(email) USING BTREE;   -- Unique single-column
+CREATE INDEX idx_city_age ON users(city, age);         -- Composite B-tree (v1.9.0)
+CREATE INDEX idx_name ON people(first_name, last_name) USING HASH;  -- Composite hash
 DROP INDEX idx_age;
 
 -- Query Analysis (v1.8.0)
 EXPLAIN SELECT * FROM users WHERE age = 30;
 -- Shows: Index Scan using idx_age (btree), Rows: ~1, Cost: O(log n)
+
+-- Composite index queries (v1.9.0)
+SELECT * FROM users WHERE city = 'NYC' AND age = 30;   -- Uses idx_city_age
+EXPLAIN SELECT * FROM users WHERE city = 'LA' AND age = 25;
+-- Shows: Index Scan using idx_city_age (btree)
 
 -- Maintenance
 VACUUM;              -- Cleanup all tables
@@ -158,23 +167,33 @@ COMMIT;  -- or ROLLBACK
 ```
 **Limitation**: Snapshot isolation works within single connection only.
 
-### Indexes (v1.7.0)
+### Indexes (v1.7.0, v1.9.0: composite support)
 ```sql
--- B-tree index: O(log n), supports range queries
+-- Single-column B-tree index: O(log n), supports range queries
 CREATE INDEX idx_age ON users(age) USING BTREE;
 SELECT * FROM users WHERE age > 30;  -- Can use index for range
+
+-- Composite B-tree index: multiple columns (v1.9.0)
+CREATE INDEX idx_city_age ON users(city, age);
+SELECT * FROM users WHERE city = 'NYC' AND age = 30;  -- Uses composite index
 
 -- Hash index: O(1) average case, equality only
 CREATE INDEX idx_category ON products(category) USING HASH;
 SELECT * FROM products WHERE category = 'Electronics';  -- O(1) lookup
 
+-- Composite hash index (v1.9.0)
+CREATE INDEX idx_name ON people(first_name, last_name) USING HASH;
+SELECT * FROM people WHERE first_name = 'John' AND last_name = 'Doe';  -- O(1)
+
 -- Index maintenance
-INSERT/UPDATE/DELETE automatically maintain all indexes
+INSERT/UPDATE/DELETE automatically maintain all indexes (single & composite)
 ```
 **Features:**
 - Two index types: **BTREE** (default) and **HASH**
+- **Single-column and multi-column (composite) indexes (v1.9.0)**
 - CREATE INDEX / CREATE UNIQUE INDEX / DROP INDEX
 - Automatic query planner (chooses index scan vs seq scan)
+- **Composite index optimization for AND conditions (v1.9.0)**
 - MVCC-aware visibility checks
 - Index maintenance on INSERT/UPDATE/DELETE
 - B-tree: Supports Equals/GreaterThan/LessThan (range queries)
@@ -252,13 +271,14 @@ QUERY PLAN
 ./tests/integration/test_index.sh         # CREATE/DROP INDEX (v1.6.0)
 ./tests/integration/test_index_usage.sh   # Index query optimization (v1.6.0)
 ./tests/integration/test_hash_index.sh    # Hash & B-tree indexes (v1.7.0)
+./tests/integration/test_composite_index.sh  # Composite indexes (v1.9.0)
 ./tests/integration/test_extended_operators.sh  # Extended WHERE (v1.8.0)
 ./tests/integration/test_explain.sh       # EXPLAIN command (v1.8.0)
 ```
 
 ## Limitations
 
-- Indexes only support single-column, simple WHERE conditions (no AND/OR with indexes yet)
+- Composite indexes require exact match of all columns (partial prefix matching not yet supported)
 - Hash indexes only support equality (=) - use B-tree for range queries
 - Single JOIN per query
 - WHERE with JOIN not fully supported
@@ -267,8 +287,9 @@ QUERY PLAN
 
 ## Версионирование
 
-**Current**: v1.8.0 (Extended WHERE operators + EXPLAIN command)
+**Current**: v1.9.0 (Composite multi-column indexes)
 **Previous**:
+- v1.8.0 - Extended WHERE operators + EXPLAIN command
 - v1.7.0 - Hash indexes with USING clause
 - v1.6.0 - B-tree indexes with query optimization
 - v1.5.1 - VACUUM command for MVCC cleanup
