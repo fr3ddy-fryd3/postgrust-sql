@@ -120,6 +120,11 @@ SELECT name FROM customers UNION ALL SELECT name FROM suppliers;   -- Keep dupli
 SELECT name FROM customers INTERSECT SELECT name FROM suppliers;   -- Common rows
 SELECT name FROM customers EXCEPT SELECT name FROM suppliers;      -- In left, not in right
 
+-- Views (v1.10.0)
+CREATE VIEW active_users AS SELECT * FROM users WHERE status = 'active';
+SELECT * FROM active_users;                                       -- Query from view
+DROP VIEW active_users;
+
 -- Types
 CREATE TYPE mood AS ENUM ('happy', 'sad');
 CREATE TABLE person (id SERIAL, m mood, data JSONB, uuid UUID);

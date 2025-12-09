@@ -315,3 +315,32 @@ pub fn parse_vacuum(input: &str) -> IResult<&str, Statement> {
 
     Ok((input, Statement::Vacuum { table }))
 }
+
+/// Parse CREATE VIEW statement (v1.10.0)
+///
+/// Syntax: CREATE VIEW name AS SELECT ...
+pub fn parse_create_view(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("CREATE"))(input)?;
+    let (input, _) = ws(tag_no_case("VIEW"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("AS"))(input)?;
+
+    // Capture the rest as query string (до конца или точки с запятой)
+    let (input, query) = nom::bytes::complete::take_while(|c: char| c != ';')(input)?;
+
+    Ok((input, Statement::CreateView {
+        name,
+        query: query.trim().to_string(),
+    }))
+}
+
+/// Parse DROP VIEW statement (v1.10.0)
+///
+/// Syntax: DROP VIEW name
+pub fn parse_drop_view(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("DROP"))(input)?;
+    let (input, _) = ws(tag_no_case("VIEW"))(input)?;
+    let (input, name) = ws(identifier)(input)?;
+
+    Ok((input, Statement::DropView { name }))
+}

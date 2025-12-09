@@ -137,6 +137,49 @@ impl QueryExecutor {
         tx_manager: &TransactionManager,
         database_storage: Option<&crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
+        // Check if 'from' is a view (v1.10.0)
+        if let Some(view_query) = db.views.get(&from) {
+            // Parse the view's SQL
+            let view_stmt = crate::parser::parse_statement(view_query)
+                .map_err(|e| DatabaseError::ParseError(e))?;
+
+            // Execute the view query (only SELECT is supported in views)
+            match view_stmt {
+                crate::parser::Statement::Select {
+                    distinct: view_distinct,
+                    columns: view_columns,
+                    from: view_from,
+                    joins: view_joins,
+                    filter: view_filter,
+                    group_by: view_group_by,
+                    order_by: view_order_by,
+                    limit: view_limit,
+                    offset: view_offset,
+                } => {
+                    // Recursively call select (handles nested views)
+                    return Self::select(
+                        db,
+                        view_distinct,
+                        view_columns,
+                        view_from,
+                        view_joins,
+                        view_filter,
+                        view_group_by,
+                        view_order_by,
+                        view_limit,
+                        view_offset,
+                        tx_manager,
+                        database_storage,
+                    );
+                }
+                _ => {
+                    return Err(DatabaseError::ParseError(
+                        format!("View '{}' contains non-SELECT statement", from)
+                    ));
+                }
+            }
+        }
+
         // Check if this is a JOIN query
         if !joins.is_empty() {
             return Self::select_with_join(db, distinct, columns, from, joins, filter, order_by, limit, offset, tx_manager, database_storage);

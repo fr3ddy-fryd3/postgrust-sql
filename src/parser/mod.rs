@@ -51,6 +51,8 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
             ddl::drop_database,
             ddl::grant,
             ddl::revoke,
+            ddl::parse_create_view,  // v1.10.0 - before create_table to avoid conflicts
+            ddl::parse_drop_view,    // v1.10.0
             ddl::create_table,
             ddl::drop_table,
             ddl::alter_table,

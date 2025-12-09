@@ -206,6 +206,27 @@ impl QueryExecutor {
                     super::explain::QueryResult::Rows(rows, cols) => Ok(QueryResult::Rows(rows, cols)),
                 }
             }
+            // Views (v1.10.0)
+            Statement::CreateView { name, query } => {
+                if db.views.contains_key(&name) {
+                    return Err(DatabaseError::ParseError(format!("View '{}' already exists", name)));
+                }
+                if db.tables.contains_key(&name) {
+                    return Err(DatabaseError::ParseError(format!("Table '{}' already exists with that name", name)));
+                }
+                // Validate query by parsing it
+                crate::parser::parse_statement(&query)
+                    .map_err(|e| DatabaseError::ParseError(e))?;
+                db.views.insert(name.clone(), query);
+                Ok(QueryResult::Success(format!("View '{}' created", name)))
+            }
+            Statement::DropView { name } => {
+                if db.views.remove(&name).is_some() {
+                    Ok(QueryResult::Success(format!("View '{}' dropped", name)))
+                } else {
+                    Err(DatabaseError::ParseError(format!("View '{}' does not exist", name)))
+                }
+            }
             Statement::Begin | Statement::Commit | Statement::Rollback => {
                 // Transaction commands should be handled at the server level
                 Err(DatabaseError::ParseError(

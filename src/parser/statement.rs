@@ -115,6 +115,14 @@ pub enum Statement {
     Explain {
         statement: Box<Statement>,
     },
+    // Views (v1.10.0)
+    CreateView {
+        name: String,
+        query: String,  // SQL query as string
+    },
+    DropView {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

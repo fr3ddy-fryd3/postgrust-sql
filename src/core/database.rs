@@ -11,6 +11,7 @@ pub struct Database {
     pub enums: HashMap<String, Vec<String>>, // enum_name -> allowed values
     #[serde(skip)] // Don't serialize indexes (rebuild on load)
     pub indexes: HashMap<String, Index>, // index_name -> Index (BTree or Hash)
+    pub views: HashMap<String, String>, // view_name -> SQL query (v1.10.0)
 }
 
 impl Database {
@@ -20,6 +21,7 @@ impl Database {
             tables: HashMap::new(),
             enums: HashMap::new(),
             indexes: HashMap::new(),
+            views: HashMap::new(),
         }
     }
 
