@@ -141,8 +141,8 @@ impl ConditionEvaluator {
     /// % matches zero or more characters
     /// _ matches exactly one character
     fn like_pattern_match(text: &str, pattern: &str) -> bool {
-        let mut text_chars: Vec<char> = text.chars().collect();
-        let mut pattern_chars: Vec<char> = pattern.chars().collect();
+        let text_chars: Vec<char> = text.chars().collect();
+        let pattern_chars: Vec<char> = pattern.chars().collect();
 
         Self::match_recursive(&text_chars, &pattern_chars, 0, 0)
     }

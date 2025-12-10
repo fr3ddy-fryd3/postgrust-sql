@@ -286,7 +286,7 @@ QUERY PLAN
 
 ## Testing
 
-**Unit tests**: 144 tests (4 known storage failures)
+**Unit tests**: 154 tests (all passing as of v1.11.0)
 **Integration**:
 ```bash
 ./tests/integration/test_features.sh      # Full feature test
@@ -313,8 +313,9 @@ QUERY PLAN
 
 ## Версионирование
 
-**Current**: v1.10.0 (CASE expressions & Set operations)
+**Current**: v1.11.0 (Critical fixes & stability)
 **Previous**:
+- v1.10.0 - CASE expressions, UNION/INTERSECT/EXCEPT, Views
 - v1.9.0 - Composite multi-column indexes
 - v1.8.0 - Extended WHERE operators + EXPLAIN command
 - v1.7.0 - Hash indexes with USING clause
@@ -325,6 +326,12 @@ QUERY PLAN
 - v1.4.0 - OFFSET, DISTINCT, UNIQUE
 - v1.3.2 - Modular architecture
 - v1.3.1 - 18 new data types
+
+**v1.11.0 Changes:**
+- 🐛 Fixed 4 failing storage tests (WAL crash recovery)
+- 🧹 Fixed all 26 compiler warnings (clean build)
+- ✅ 154/154 unit tests passing
+- ✅ All integration tests passing
 
 **Git tags**: `git tag -a v1.X.Y -m "message"`
 
@@ -364,10 +371,9 @@ hyperfine './target/release/postgrustql'
 
 ## Известные проблемы
 
-1. **Storage disk tests fail** (4 tests) - pre-existing, low priority
-2. **Write amplification** - current Vec<Row> backend rewrites entire DB (~100M x)
-   - Solution ready but not integrated: page-based storage (~80x)
-3. **Transaction isolation** - only works within single connection
+1. ✅ ~~**Storage disk tests fail**~~ - FIXED in v1.11.0 (load_database now handles WAL correctly)
+2. ✅ ~~**Compiler warnings**~~ - FIXED in v1.11.0 (all 26 warnings resolved)
+3. **Transaction isolation** - only works within single connection (planned for v2.1.0)
 4. **Parser limitations** - single quotes only, no escape sequences
 5. **CLI pipe issues** - fixed in v1.3.1 (rustyline)
 

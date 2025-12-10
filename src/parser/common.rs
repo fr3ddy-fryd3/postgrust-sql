@@ -8,7 +8,7 @@ use nom::{
     bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::{alpha1, char, digit1, multispace0},
     combinator::{map, map_res, opt, recognize},
-    sequence::{delimited, pair, preceded, tuple},
+    sequence::{delimited, pair, tuple},
     IResult,
 };
 

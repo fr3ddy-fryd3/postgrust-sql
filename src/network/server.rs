@@ -155,7 +155,7 @@ impl Server {
     }
 
     async fn handle_client_auto(
-        mut socket: TcpStream,
+        socket: TcpStream,
         instance: Arc<Mutex<ServerInstance>>,
         storage: Arc<Mutex<StorageEngine>>,
         tx_manager: TransactionManager,

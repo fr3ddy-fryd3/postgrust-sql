@@ -866,7 +866,7 @@ impl QueryExecutor {
         };
 
         let (left_table_name, left_col_name) = parse_col_ref(&join.on_left)?;
-        let (right_table_name, right_col_name) = parse_col_ref(&join.on_right)?;
+        let (_right_table_name, right_col_name) = parse_col_ref(&join.on_right)?;
 
         // Determine which is main and which is joined
         let (main_join_col, join_join_col) = if left_table_name == from {

@@ -58,6 +58,9 @@ SELECT name FROM customers UNION SELECT name FROM suppliers;
 SELECT name FROM customers UNION ALL SELECT name FROM suppliers;
 SELECT name FROM customers INTERSECT SELECT name FROM suppliers;
 SELECT name FROM customers EXCEPT SELECT name FROM suppliers;
+CREATE VIEW active_users AS SELECT name, age FROM users WHERE status = 'active';
+SELECT * FROM active_users;
+DROP VIEW active_users;
 quit
 EOF
 
@@ -101,6 +104,15 @@ if echo "$OUTPUT" | grep -q "Alice"; then
     echo "✓ EXCEPT works"
 else
     echo "✗ EXCEPT failed"
+    echo "$OUTPUT"
+    exit 1
+fi
+
+# Views (should show Bob and David - active users with age)
+if echo "$OUTPUT" | grep -q "Bob" && echo "$OUTPUT" | grep -q "25"; then
+    echo "✓ Views work"
+else
+    echo "✗ Views failed"
     echo "$OUTPUT"
     exit 1
 fi

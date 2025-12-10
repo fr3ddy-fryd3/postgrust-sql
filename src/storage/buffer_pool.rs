@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
 use super::page::{Page, PageId};
 use crate::types::DatabaseError;
 
@@ -122,7 +121,7 @@ impl BufferPool {
     /// Evict least recently used page
     fn evict_page(&mut self) -> Result<Option<PageId>, DatabaseError> {
         // Find LRU page that is not dirty
-        let mut candidate = self.lru.get_lru();
+        let candidate = self.lru.get_lru();
 
         // If LRU is dirty, we need to write it first (handled by caller)
         // For now, just evict the LRU regardless

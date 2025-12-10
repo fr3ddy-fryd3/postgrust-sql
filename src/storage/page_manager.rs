@@ -2,7 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use super::page::{Page, PageId, PAGE_SIZE};
+use super::page::{Page, PageId};
 use super::buffer_pool::BufferPool;
 use crate::types::{DatabaseError, Row};
 
@@ -87,7 +87,7 @@ impl PageManager {
                 if let Some(evicted_page) = pool.remove_page(evicted_page_id) {
                     drop(pool);
                     self.write_page_to_disk(&evicted_page)?;
-                    pool = self.buffer_pool.lock().unwrap();
+                    // Lock will be re-acquired on next iteration or function exit
                 }
             }
         }
@@ -96,7 +96,7 @@ impl PageManager {
     }
 
     /// Get a mutable reference to a page (marks as dirty)
-    pub fn get_page_mut(&self, page_id: PageId) -> Result<PageMutGuard, DatabaseError> {
+    pub fn get_page_mut(&self, page_id: PageId) -> Result<PageMutGuard<'_>, DatabaseError> {
         // Ensure page is in buffer pool
         self.get_page(page_id)?;
 
@@ -131,7 +131,7 @@ impl PageManager {
         drop(pool);
 
         // Write all dirty pages
-        for (page_id, page) in dirty_pages {
+        for (_page_id, page) in dirty_pages {
             self.write_page_to_disk(&page)?;
         }
 

@@ -4,10 +4,29 @@
 
 ---
 
-## 🎯 v1.10.0 - SQL Expressions & Set Operations
+## ✅ v1.11.0 - Critical Fixes & Stability
+
+**Цель:** Исправить все известные баги и warnings перед v2.0
+**Статус:** Completed (2025-12-10)
+**Сложность:** Низкая
+
+### Fixed Issues:
+1. ✅ **4 failing storage tests** - Fixed `load_database()` to properly handle WAL replay for crash recovery
+2. ✅ **26 compiler warnings** - All resolved (unused imports, variables, dead code)
+3. ✅ **154/154 unit tests passing** - 100% test success rate
+4. ✅ **All integration tests passing** - Hash indexes, composite indexes, SQL expressions
+
+### Changes:
+- `src/storage/disk.rs`: Enhanced `load_database()` with proper WAL fallback
+- `src/executor/*.rs`: Fixed unused variable warnings
+- `src/storage/page_manager.rs`: Fixed lifetime and unused assignment warnings
+
+---
+
+## ✅ v1.10.0 - SQL Expressions & Set Operations
 
 **Цель:** Расширение SQL функциональности, быстрые победы
-**Статус:** Planned
+**Статус:** Completed (2025-12-09)
 **Сложность:** Низкая-Средняя
 
 ### Features:
@@ -485,26 +504,38 @@ $$ LANGUAGE plpgsql;
 | Version | Focus | Key Features | Complexity | ETA |
 |---------|-------|--------------|------------|-----|
 | v1.9.0 | ✅ Done | Composite Indexes | Medium | Completed |
-| v1.10.0 | SQL | CASE, UNION, Views | Low-Medium | Next |
-| v1.11.0 | Transactions | Multi-connection isolation | Very High | After 1.10 |
-| v2.0.0 | Compatibility | Cleanup + PostgreSQL protocol | High | Major |
+| v1.10.0 | ✅ Done | CASE, UNION, Views | Low-Medium | Completed |
+| v1.11.0 | ✅ Done | Critical fixes & stability | Low | Completed |
+| v2.0.0 | Cleanup | Remove legacy + PostgreSQL protocol | High | **NEXT** |
 | v2.1.0 | Production | Backup/Restore tools | Medium | After 2.0 |
 | v2.2+ | Advanced | Subqueries, Windows, etc | Varies | TBD |
 
+**Note:** v2.0.0 MUST come before v2.1.0 - backup tools need clean architecture!
+
 ---
 
-## 🎯 Current Priority: v1.10.0
+## 🎯 Current Priority: v2.0.0 - Cleanup & PostgreSQL Compatibility
+
+**Completed:**
+- ✅ v1.10.0 (CASE, UNION/INTERSECT/EXCEPT, Views) - 2025-12-09
+- ✅ v1.11.0 (Critical fixes: storage tests, compiler warnings) - 2025-12-10
+
+**Why v2.0.0 now?**
+- Remove technical debt (legacy.rs, unused code, 25 compiler warnings)
+- Clean architecture needed BEFORE v2.1.0 backup tools
+- Breaking changes acceptable at major version bump
+- PostgreSQL protocol improvements (authentication)
 
 **Next Steps:**
-1. Start with CASE expressions (easiest)
-2. Implement UNION/INTERSECT/EXCEPT
-3. Add Views support
-4. Write tests
-5. Update documentation
-6. Tag v1.10.0
+1. Analyze legacy.rs - what's still used?
+2. Remove unused code and warnings (13 auto-fixable)
+3. Optional: PostgreSQL authentication protocol
+4. Optional: System catalogs (pg_catalog)
+5. Update all tests
+6. Tag v2.0.0
 
-**See TODO list in current session for detailed tasks.**
+**Alternative:** Skip to v1.11.0 (Multi-Connection Transactions) - Very High Complexity
 
 ---
 
-**Last Updated:** 2025-12-09 (after v1.9.0 completion)
+**Last Updated:** 2025-12-10 (after v1.10.0 verification)

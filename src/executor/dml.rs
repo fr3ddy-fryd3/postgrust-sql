@@ -4,10 +4,10 @@
 /// This allows seamless operation with both Vec<Row> and PagedTable.
 
 use crate::types::{Database, DatabaseError, Row, Value, Column, DataType};
-use crate::parser::{Statement, Condition};
+use crate::parser::Condition;
 use crate::storage::StorageEngine;
 use crate::transaction::TransactionManager;
-use super::storage_adapter::{RowStorage, LegacyStorage};
+use super::storage_adapter::RowStorage;
 use super::legacy_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
 use crate::index::Index;
@@ -300,6 +300,7 @@ impl DmlExecutor {
     }
 
     /// Update SERIAL sequences after successful insert
+    #[allow(dead_code)]
     fn update_serial_sequences(
         table: &mut crate::types::Table,
         values: &[Value],
@@ -533,12 +534,12 @@ impl DmlExecutor {
     /// For now, users should call insert_with_storage directly.
     #[allow(dead_code)]
     pub fn insert_legacy(
-        db: &mut Database,
-        table_name: &str,
-        columns: Option<Vec<String>>,
-        values: Vec<Value>,
-        storage_engine: Option<&mut StorageEngine>,
-        tx_manager: &TransactionManager,
+        _db: &mut Database,
+        _table_name: &str,
+        _columns: Option<Vec<String>>,
+        _values: Vec<Value>,
+        _storage_engine: Option<&mut StorageEngine>,
+        _tx_manager: &TransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         // TODO: This needs refactoring due to borrow checker constraints
         // For now, legacy executor continues to use direct table.rows access

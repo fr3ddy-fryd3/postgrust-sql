@@ -26,7 +26,7 @@ impl VacuumExecutor {
         db: &mut Database,
         table_name: Option<String>,
         tx_manager: &TransactionManager,
-        database_storage: Option<&mut crate::storage::DatabaseStorage>,
+        _database_storage: Option<&mut crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
         // Get cleanup horizon - only tuples invisible to all transactions can be removed
         let oldest_tx = tx_manager.get_oldest_active_tx();

@@ -3,7 +3,7 @@ use super::common::{ws, identifier, data_type, string_literal};
 use super::statement::{Statement, ColumnDef, PrivilegeType};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, tag_no_case, take_while1},
+    bytes::complete::{tag_no_case, take_while1},
     character::complete::char,
     combinator::{map, opt},
     multi::separated_list1,

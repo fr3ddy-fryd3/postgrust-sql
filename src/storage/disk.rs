@@ -87,14 +87,38 @@ impl StorageEngine {
     /// Загружает базу данных из snapshot + применяет WAL (legacy метод для совместимости)
     #[allow(dead_code)]
     pub fn load_database(&self, name: &str) -> Result<Database, DatabaseError> {
+        // Сначала пытаемся загрузить из ServerInstance
         let instance = self.load_server_instance()?;
 
         if let Some(db) = instance.databases.get(name) {
-            Ok(db.clone())
-        } else {
-            // Если БД не найдена, создаем новую
-            Ok(Database::new(name.to_string()))
+            return Ok(db.clone());
         }
+
+        // Fallback: проверяем legacy формат {name}.db
+        let db_path = self.data_dir.join(format!("{}.db", name));
+        if db_path.exists() {
+            let data = fs::read(&db_path)?;
+            let mut db: Database = bincode::deserialize(&data)
+                .map_err(|e| DatabaseError::BinarySerialization(e.to_string()))?;
+
+            // Применяем WAL операции
+            let logs = self.wal.read_all_logs()?;
+            for entry in logs {
+                WalManager::apply_operation(&mut db, &entry.operation)?;
+            }
+
+            return Ok(db);
+        }
+
+        // Если БД не найдена в snapshot, но есть WAL - применяем WAL к новой БД
+        // Это нужно для crash recovery когда snapshot не был создан
+        let mut db = Database::new(name.to_string());
+        let logs = self.wal.read_all_logs()?;
+        for entry in logs {
+            WalManager::apply_operation(&mut db, &entry.operation)?;
+        }
+
+        Ok(db)
     }
 
     /// Проверяет нужен ли checkpoint
