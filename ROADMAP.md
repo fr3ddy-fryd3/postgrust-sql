@@ -109,10 +109,10 @@ DROP VIEW active_users;
 
 ---
 
-## 🔒 v1.11.0 - Multi-Connection Transaction Isolation
+## 🔒 v2.1.0 - Multi-Connection Transaction Isolation
 
 **Цель:** Production-ready транзакции с настоящей изоляцией
-**Статус:** Planned
+**Статус:** Planned (after v2.0.0)
 **Сложность:** Очень Высокая
 
 ### Current State:
@@ -224,11 +224,11 @@ impl Row {
 - Known limitations
 
 ---
-## 🔮 v2.0.0 - PostgreSQL Compatibility
+## 🔮 v2.0.0 - PostgreSQL Protocol & Cleanup
 
-**Цель:** Совместимость с psql и pg_dump + cleanup legacy
-**Статус:** Planned
-**Сложность:** Очень Высокая
+**Цель:** Совместимость с psql + cleanup legacy code
+**Статус:** **NEXT** (after v1.11.0)
+**Сложность:** Высокая
 **Breaking Changes:** Yes (authentication protocol)
 
 ### 1. Cleanup Legacy Code
@@ -350,10 +350,10 @@ Fast bulk import/export for `pg_dump`.
 
 ---
 
-## 🚀 v2.1.0 - Backup & Restore Tools
+## 🚀 v2.2.0 - Backup & Restore Tools
 
 **Цель:** Собственные утилиты для бэкапа и восстановления (альтернатива pg_dump)
-**Статус:** Planned
+**Статус:** Planned (after v2.1.0 transactions)
 **Сложность:** Средняя
 
 ### 1. rustdb-dump
@@ -506,11 +506,10 @@ $$ LANGUAGE plpgsql;
 | v1.9.0 | ✅ Done | Composite Indexes | Medium | Completed |
 | v1.10.0 | ✅ Done | CASE, UNION, Views | Low-Medium | Completed |
 | v1.11.0 | ✅ Done | Critical fixes & stability | Low | Completed |
-| v2.0.0 | Cleanup | Remove legacy + PostgreSQL protocol | High | **NEXT** |
-| v2.1.0 | Production | Backup/Restore tools | Medium | After 2.0 |
-| v2.2+ | Advanced | Subqueries, Windows, etc | Varies | TBD |
-
-**Note:** v2.0.0 MUST come before v2.1.0 - backup tools need clean architecture!
+| v2.0.0 | PostgreSQL | Auth protocol + cleanup | High | **NEXT** |
+| v2.1.0 | Transactions | Multi-connection isolation | Very High | After 2.0 |
+| v2.2.0 | Backup | Backup/Restore tools | Medium | After 2.1 |
+| v2.3+ | Advanced | Subqueries, Windows, etc | Varies | TBD |
 
 ---
 
@@ -521,20 +520,22 @@ $$ LANGUAGE plpgsql;
 - ✅ v1.11.0 (Critical fixes: storage tests, compiler warnings) - 2025-12-10
 
 **Why v2.0.0 now?**
-- Remove technical debt (legacy.rs, unused code, 25 compiler warnings)
-- Clean architecture needed BEFORE v2.1.0 backup tools
+- ✅ All critical bugs fixed (v1.11.0)
+- PostgreSQL protocol improvements needed for compatibility
 - Breaking changes acceptable at major version bump
-- PostgreSQL protocol improvements (authentication)
+- Clean foundation for v2.1 (transactions) and v2.2 (backup tools)
 
-**Next Steps:**
-1. Analyze legacy.rs - what's still used?
-2. Remove unused code and warnings (13 auto-fixable)
-3. Optional: PostgreSQL authentication protocol
-4. Optional: System catalogs (pg_catalog)
-5. Update all tests
-6. Tag v2.0.0
+**Scope v2.0.0:**
+1. **PostgreSQL Auth Protocol** - AuthenticationCleartextPassword flow
+2. **System Catalogs** (optional) - pg_catalog.pg_class, pg_attribute, etc.
+3. **Code cleanup** - Rename legacy.rs → dispatcher.rs (cosmetic)
+4. **Documentation** - PostgreSQL compatibility level
+5. **Testing** - psql client compatibility
 
-**Alternative:** Skip to v1.11.0 (Multi-Connection Transactions) - Very High Complexity
+**Why this order?**
+- v2.0 = Breaking protocol changes
+- v2.1 = Transactions (no protocol changes, uses clean v2.0 code)
+- v2.2 = Backup tools (uses stable v2.1 with transactions)
 
 ---
 
