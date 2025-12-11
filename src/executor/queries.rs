@@ -5,7 +5,7 @@
 use crate::types::{Database, DatabaseError, Row, Table, Value};
 use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression};
 use crate::transaction::TransactionManager;
-use super::legacy_executor::QueryResult;
+use super::dispatcher_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
 use crate::index::Index;
 

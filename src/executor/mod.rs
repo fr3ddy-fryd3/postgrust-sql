@@ -11,9 +11,10 @@
 /// - ddl: CREATE/DROP/ALTER TABLE operations ✅
 /// - queries: SELECT operations (regular, aggregate, join, group by) (TODO)
 
-// Legacy monolithic executor (3009 lines) - to be refactored
-#[path = "legacy.rs"]
-mod legacy_executor;
+// v2.0.0: Renamed from legacy.rs to dispatcher.rs
+// Thin dispatcher that delegates to modular executors
+#[path = "dispatcher.rs"]
+mod dispatcher_executor;
 
 // New modular components
 pub mod storage_adapter;
@@ -25,8 +26,8 @@ pub mod vacuum;
 pub mod index;
 pub mod explain;  // v1.8.0
 
-// Re-export legacy executor for backward compatibility
-pub use legacy_executor::{QueryExecutor, QueryResult};
+// Re-export main executor
+pub use dispatcher_executor::{QueryExecutor, QueryResult};
 
 // Re-export new modular components
 pub use storage_adapter::RowStorage;

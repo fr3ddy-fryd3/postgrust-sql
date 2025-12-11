@@ -7,7 +7,7 @@
 
 use crate::core::{Database, DatabaseError};
 use crate::transaction::TransactionManager;
-use super::legacy_executor::QueryResult;
+use super::dispatcher_executor::QueryResult;
 
 pub struct VacuumExecutor;
 

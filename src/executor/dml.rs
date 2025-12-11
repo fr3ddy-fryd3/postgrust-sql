@@ -8,7 +8,7 @@ use crate::parser::Condition;
 use crate::storage::StorageEngine;
 use crate::transaction::TransactionManager;
 use super::storage_adapter::RowStorage;
-use super::legacy_executor::QueryResult;
+use super::dispatcher_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
 use crate::index::Index;
 use std::collections::HashMap;

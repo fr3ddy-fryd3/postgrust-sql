@@ -5,7 +5,7 @@
 use crate::types::{Database, DatabaseError, Table, Column, DataType};
 use crate::parser::{ColumnDef, AlterTableOperation};
 use crate::storage::StorageEngine;
-use super::legacy_executor::QueryResult;
+use super::dispatcher_executor::QueryResult;
 
 pub struct DdlExecutor;
 
