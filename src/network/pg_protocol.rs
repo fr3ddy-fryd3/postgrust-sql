@@ -23,6 +23,7 @@ pub mod backend {
 pub mod frontend {
     pub const QUERY: u8 = b'Q';
     pub const TERMINATE: u8 = b'X';
+    pub const PASSWORD: u8 = b'p'; // v2.0.0: Password message
 }
 
 /// Transaction status indicators
@@ -48,6 +49,34 @@ pub mod error_field {
 
 pub struct StartupMessage {
     pub parameters: HashMap<String, String>,
+}
+
+/// PasswordMessage from client (v2.0.0)
+pub struct PasswordMessage {
+    pub password: String,
+}
+
+impl PasswordMessage {
+    /// Read PasswordMessage from client
+    /// Format: 'p' + Int32(length) + password (null-terminated string)
+    pub async fn read<R: AsyncReadExt + Unpin>(reader: &mut R) -> std::io::Result<Self> {
+        // Message type already read by caller
+        // Read length
+        let length = reader.read_i32().await?;
+
+        // Read password (null-terminated)
+        let password_len = (length - 4) as usize; // -4 for length field itself
+        let mut password_buf = vec![0u8; password_len];
+        reader.read_exact(&mut password_buf).await?;
+
+        // Remove null terminator if present
+        if let Some(&0) = password_buf.last() {
+            password_buf.pop();
+        }
+
+        let password = String::from_utf8_lossy(&password_buf).to_string();
+        Ok(PasswordMessage { password })
+    }
 }
 
 impl StartupMessage {
@@ -137,6 +166,16 @@ impl Message {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::AUTHENTICATION);
         msg.buf.put_i32(0); // 0 = AuthenticationOk
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// AuthenticationCleartextPassword message (v2.0.0)
+    /// Requests client to send cleartext password
+    pub fn authentication_cleartext_password() -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::AUTHENTICATION);
+        msg.buf.put_i32(3); // 3 = AuthenticationCleartextPassword
         msg.finish(len_pos);
         msg
     }

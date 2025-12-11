@@ -206,14 +206,25 @@ impl Server {
             // Now read the actual startup message
             let startup = StartupMessage::read(&mut reader).await?;
 
-            // Continue with normal flow
+            // v2.0.0: Standard PostgreSQL authentication flow
             let user = startup.parameters.get("user").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
-            let password = startup.parameters.get("password").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
             let database_name = startup.parameters.get("database").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
+
+            // Request password from client
+            Message::authentication_cleartext_password().send(&mut writer).await?;
+
+            // Read PasswordMessage
+            let msg_type = reader.read_u8().await?;
+            if msg_type != pg_protocol::frontend::PASSWORD {
+                Message::error_response("Expected password message").send(&mut writer).await?;
+                return Ok(());
+            }
+
+            let password_msg = pg_protocol::PasswordMessage::read(&mut reader).await?;
 
             // Authenticate
             let inst = instance.lock().await;
-            if inst.authenticate(&user, &password) {
+            if inst.authenticate(&user, &password_msg.password) {
                 session.authenticate(user.clone(), database_name.clone());
                 println!("✓ PostgreSQL client authenticated: user={}, database={}", user, database_name);
             } else {
@@ -257,13 +268,25 @@ impl Server {
                 }
             }
 
+            // v2.0.0: Standard PostgreSQL authentication flow
             let user = parameters.get("user").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
-            let password = parameters.get("password").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
             let database_name = parameters.get("database").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
+
+            // Request password from client
+            Message::authentication_cleartext_password().send(&mut writer).await?;
+
+            // Read PasswordMessage
+            let msg_type = reader.read_u8().await?;
+            if msg_type != pg_protocol::frontend::PASSWORD {
+                Message::error_response("Expected password message").send(&mut writer).await?;
+                return Ok(());
+            }
+
+            let password_msg = pg_protocol::PasswordMessage::read(&mut reader).await?;
 
             // Authenticate
             let inst = instance.lock().await;
-            if inst.authenticate(&user, &password) {
+            if inst.authenticate(&user, &password_msg.password) {
                 session.authenticate(user.clone(), database_name.clone());
                 println!("✓ PostgreSQL client authenticated: user={}, database={}", user, database_name);
             } else {
