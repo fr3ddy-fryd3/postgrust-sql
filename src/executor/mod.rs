@@ -29,7 +29,7 @@ pub mod explain;  // v1.8.0
 pub use legacy_executor::{QueryExecutor, QueryResult};
 
 // Re-export new modular components
-pub use storage_adapter::{RowStorage, LegacyStorage};
+pub use storage_adapter::RowStorage;
 pub use conditions::ConditionEvaluator;
 pub use dml::DmlExecutor;
 pub use ddl::DdlExecutor;

@@ -19,7 +19,10 @@ pub enum StorageMode {
 pub struct Table {
     pub name: String,
     pub columns: Vec<Column>,
-    /// Legacy in-memory storage (still used for serialization)
+    /// v2.0.0: Kept only for serialization compatibility
+    /// Actual row storage uses PagedTable (managed by DatabaseStorage)
+    /// This field is synced during checkpoint for persistence
+    #[deprecated(since = "2.0.0", note = "Use DatabaseStorage::get_paged_table() instead")]
     pub rows: Vec<Row>,
     /// Sequence counters for SERIAL columns: column_name -> next_value
     pub sequences: HashMap<String, i64>,

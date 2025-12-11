@@ -1,15 +1,13 @@
-/// Storage adapter - abstraction over Vec<Row> and PagedTable
+/// Storage adapter - abstraction for PagedTable storage
 ///
-/// This module provides a unified interface for row storage, allowing
-/// operations to work with either legacy Vec<Row> or new page-based storage.
+/// v2.0.0: Legacy Vec<Row> storage has been removed.
+/// This module provides a unified interface for page-based row storage.
 
 use crate::types::{Row, DatabaseError};
 
 /// Trait for row storage operations
 ///
-/// Implementations:
-/// - LegacyStorage: wraps Vec<Row> (current default)
-/// - PagedStorage: wraps PagedTable (new, high-performance)
+/// v2.0.0: Only PagedStorage implementation remains
 pub trait RowStorage {
     /// Insert a row into storage
     fn insert(&mut self, row: Row) -> Result<(), DatabaseError>;
@@ -37,75 +35,7 @@ pub trait RowStorage {
     }
 }
 
-/// Legacy storage: wraps Vec<Row>
-///
-/// This is the current default, maintains 100% backward compatibility.
-pub struct LegacyStorage<'a> {
-    rows: &'a mut Vec<Row>,
-}
-
-impl<'a> LegacyStorage<'a> {
-    pub fn new(rows: &'a mut Vec<Row>) -> Self {
-        Self { rows }
-    }
-}
-
-impl<'a> RowStorage for LegacyStorage<'a> {
-    fn insert(&mut self, row: Row) -> Result<(), DatabaseError> {
-        self.rows.push(row);
-        Ok(())
-    }
-
-    fn get_all(&self) -> Result<Vec<Row>, DatabaseError> {
-        Ok(self.rows.clone())
-    }
-
-    fn update_where<F, U>(&mut self, predicate: F, updater: U, tx_id: u64) -> Result<usize, DatabaseError>
-    where
-        F: Fn(&Row) -> bool,
-        U: Fn(&Row) -> Row,
-    {
-        // MVCC-aware update: mark old rows + insert new versions
-        let mut new_rows = Vec::new();
-        let mut updated = 0;
-
-        for row in self.rows.iter_mut() {
-            if predicate(row) {
-                // Mark old version as deleted
-                row.mark_deleted(tx_id);
-                // Create new version
-                let mut new_row = updater(row);
-                new_row.xmin = tx_id;
-                new_row.xmax = None;
-                new_rows.push(new_row);
-                updated += 1;
-            }
-        }
-
-        // Append new versions
-        self.rows.extend(new_rows);
-        Ok(updated)
-    }
-
-    fn delete_where<F>(&mut self, predicate: F, tx_id: u64) -> Result<usize, DatabaseError>
-    where
-        F: Fn(&Row) -> bool,
-    {
-        // MVCC-aware delete: mark rows with xmax instead of physical removal
-        let mut deleted = 0;
-        for row in self.rows.iter_mut() {
-            if predicate(row) {
-                row.mark_deleted(tx_id);
-                deleted += 1;
-            }
-        }
-        Ok(deleted)
-    }
-
-    fn count(&self) -> usize {
-        self.rows.len()
-    }
-}
+// v2.0.0: LegacyStorage has been removed - page-based storage only
 
 /// Paged storage: wraps PagedTable
 ///
@@ -154,70 +84,4 @@ impl<'a> RowStorage for PagedStorage<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::Value;
-
-    #[test]
-    fn test_legacy_storage_insert() {
-        let mut rows = Vec::new();
-        let mut storage = LegacyStorage::new(&mut rows);
-
-        let row = Row::new(vec![Value::Integer(1), Value::Text("test".to_string())]);
-        storage.insert(row).unwrap();
-
-        assert_eq!(storage.count(), 1);
-    }
-
-    #[test]
-    fn test_legacy_storage_get_all() {
-        let mut rows = vec![
-            Row::new(vec![Value::Integer(1)]),
-            Row::new(vec![Value::Integer(2)]),
-        ];
-        let storage = LegacyStorage::new(&mut rows);
-
-        let all_rows = storage.get_all().unwrap();
-        assert_eq!(all_rows.len(), 2);
-    }
-
-    #[test]
-    fn test_legacy_storage_update_where() {
-        let mut rows = vec![
-            Row::new(vec![Value::Integer(1)]),
-            Row::new(vec![Value::Integer(2)]),
-            Row::new(vec![Value::Integer(3)]),
-        ];
-        let mut storage = LegacyStorage::new(&mut rows);
-
-        let updated = storage.update_where(
-            |row| matches!(row.values[0], Value::Integer(x) if x > 1),
-            |_| Row::new(vec![Value::Integer(99)]),
-            100 // tx_id
-        ).unwrap();
-
-        assert_eq!(updated, 2);
-        // MVCC: old rows marked + new rows added
-        assert_eq!(storage.count(), 5); // 3 original + 2 new versions
-    }
-
-    #[test]
-    fn test_legacy_storage_delete_where() {
-        let mut rows = vec![
-            Row::new(vec![Value::Integer(1)]),
-            Row::new(vec![Value::Integer(2)]),
-            Row::new(vec![Value::Integer(3)]),
-        ];
-        let mut storage = LegacyStorage::new(&mut rows);
-
-        let deleted = storage.delete_where(
-            |row| matches!(row.values[0], Value::Integer(x) if x > 1),
-            100 // tx_id
-        ).unwrap();
-
-        assert_eq!(deleted, 2);
-        // MVCC: rows are marked as deleted, not physically removed
-        assert_eq!(storage.count(), 3); // All 3 rows still in storage
-    }
-}
+// v2.0.0: LegacyStorage tests removed
