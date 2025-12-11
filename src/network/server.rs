@@ -534,15 +534,12 @@ impl Server {
                                                 None
                                             };
 
-                                            // Get database_storage if available
-                                            let mut db_storage_guard = if let Some(ref db_storage) = database_storage {
-                                                Some(db_storage.lock().await)
-                                            } else {
-                                                None
-                                            };
-                                            let db_storage_option = db_storage_guard.as_deref_mut();
+                                            // v2.0.0: database_storage is now required
+                                            let db_storage = database_storage.as_ref()
+                                                .expect("v2.0.0: database_storage is required");
+                                            let mut db_storage_guard = db_storage.lock().await;
 
-                                            match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, db_storage_option) {
+                                            match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, &mut *db_storage_guard) {
                                                 Ok(result) => {
                                                     if !transaction.is_active() {
                                                         if let Err(e) = storage_guard.save_server_instance(&inst) {
@@ -725,15 +722,12 @@ impl Server {
                                     None
                                 };
 
-                                // Get database_storage if available
-                                let mut db_storage_guard = if let Some(ref db_storage) = database_storage {
-                                    Some(db_storage.lock().await)
-                                } else {
-                                    None
-                                };
-                                let db_storage_option = db_storage_guard.as_deref_mut();
+                                // v2.0.0: database_storage is now required
+                                let db_storage = database_storage.as_ref()
+                                    .expect("v2.0.0: database_storage is required");
+                                let mut db_storage_guard = db_storage.lock().await;
 
-                                match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, db_storage_option) {
+                                match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, &mut *db_storage_guard) {
                                     Ok(result) => {
                                         // Checkpoint if needed (only if not in transaction)
                                         if !transaction.is_active() {

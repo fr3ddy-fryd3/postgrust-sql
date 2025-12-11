@@ -7,7 +7,7 @@ use crate::types::{Database, DatabaseError, Row, Table, Value};
 use super::ddl::DdlExecutor;
 use super::dml::DmlExecutor;
 use super::queries::QueryExecutor as QueriesExecutor;
-use super::storage_adapter::{LegacyStorage, PagedStorage};
+use super::storage_adapter::PagedStorage;
 
 pub struct QueryExecutor;
 
@@ -19,17 +19,19 @@ pub enum QueryResult {
 
 impl QueryExecutor {
     /// Executes a query with automatic WAL logging and MVCC support
+    ///
+    /// v2.0.0: database_storage is now required (page-based storage only)
     pub fn execute(
         db: &mut Database,
         stmt: Statement,
         storage: Option<&mut StorageEngine>,
         tx_manager: &TransactionManager,
-        database_storage: Option<&mut crate::storage::DatabaseStorage>,
+        database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         match stmt {
             // DDL operations - delegate to DdlExecutor
             Statement::CreateTable { name, columns } => {
-                DdlExecutor::create_table(db, name, columns, storage, database_storage)
+                DdlExecutor::create_table(db, name, columns, storage, Some(database_storage))
             }
             Statement::DropTable { name } => DdlExecutor::drop_table(db, name, storage),
             Statement::AlterTable { name, operation } => {
@@ -50,112 +52,63 @@ impl QueryExecutor {
                 let table_sequences = table_ref.sequences.clone();
                 let all_tables = db.tables.clone();  // Clone to avoid borrow conflict
 
-                if let Some(db_storage) = database_storage {
-                    // Page-based storage: use PagedStorage
-                    let paged_table = db_storage.get_paged_table_mut(&table)
-                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
-                    let mut storage_adapter = PagedStorage::new(paged_table);
+                // v2.0.0: Page-based storage only
+                let paged_table = database_storage.get_paged_table_mut(&table)
+                    .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
+                let mut storage_adapter = PagedStorage::new(paged_table);
 
-                    // Split borrow: get separate mutable references to different fields
-                    let table_mut = db.tables.get_mut(&table).unwrap();
-                    let sequences_mut = &mut table_mut.sequences;
-                    let indexes = &mut db.indexes;
+                // Split borrow: get separate mutable references to different fields
+                let table_mut = db.tables.get_mut(&table).unwrap();
+                let sequences_mut = &mut table_mut.sequences;
+                let indexes = &mut db.indexes;
 
-                    DmlExecutor::insert_with_storage(
-                        &table_columns,
-                        &table_sequences,
-                        sequences_mut,
-                        &all_tables,
-                        &table,
-                        columns,
-                        values,
-                        &mut storage_adapter,
-                        storage,
-                        tx_manager,
-                        indexes,
-                    )
-                } else {
-                    // Legacy storage: use Vec<Row>
-                    // Split borrow: get separate mutable references to different fields
-                    let table_mut = db.tables.get_mut(&table).unwrap();
-                    let sequences_mut = &mut table_mut.sequences;
-                    let indexes = &mut db.indexes;
-                    let mut storage_adapter = LegacyStorage::new(&mut table_mut.rows);
-
-                    DmlExecutor::insert_with_storage(
-                        &table_columns,
-                        &table_sequences,
-                        sequences_mut,
-                        &all_tables,
-                        &table,
-                        columns,
-                        values,
-                        &mut storage_adapter,
-                        storage,
-                        tx_manager,
-                        indexes,
-                    )
-                }
+                DmlExecutor::insert_with_storage(
+                    &table_columns,
+                    &table_sequences,
+                    sequences_mut,
+                    &all_tables,
+                    &table,
+                    columns,
+                    values,
+                    &mut storage_adapter,
+                    storage,
+                    tx_manager,
+                    indexes,
+                )
             }
             Statement::Update {
                 table,
                 assignments,
                 filter,
             } => {
-                if let Some(db_storage) = database_storage {
-                    // Page-based storage: use PagedStorage
-                    let table_ref = db.get_table(&table)
-                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
-                    let table_columns = table_ref.columns.clone();
+                // v2.0.0: Page-based storage only
+                let table_ref = db.get_table(&table)
+                    .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
+                let table_columns = table_ref.columns.clone();
 
-                    let paged_table = db_storage.get_paged_table_mut(&table)
-                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
-                    let mut storage_adapter = PagedStorage::new(paged_table);
-                    let indexes = &mut db.indexes;
+                let paged_table = database_storage.get_paged_table_mut(&table)
+                    .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
+                let mut storage_adapter = PagedStorage::new(paged_table);
+                let indexes = &mut db.indexes;
 
-                    DmlExecutor::update_with_storage(
-                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table, indexes
-                    )
-                } else {
-                    // Legacy storage: use Vec<Row>
-                    let table_ref = db.tables.get_mut(&table)
-                        .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
-                    let table_columns = table_ref.columns.clone();
-                    let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
-                    let indexes = &mut db.indexes;
-
-                    DmlExecutor::update_with_storage(
-                        &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table, indexes
-                    )
-                }
+                DmlExecutor::update_with_storage(
+                    &table_columns, assignments, filter, &mut storage_adapter, storage, tx_manager, &table, indexes
+                )
             }
             Statement::Delete { from, filter } => {
-                if let Some(db_storage) = database_storage {
-                    // Page-based storage: use PagedStorage
-                    let table_ref = db.get_table(&from)
-                        .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
-                    let table_columns = table_ref.columns.clone();
+                // v2.0.0: Page-based storage only
+                let table_ref = db.get_table(&from)
+                    .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+                let table_columns = table_ref.columns.clone();
 
-                    let paged_table = db_storage.get_paged_table_mut(&from)
-                        .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
-                    let mut storage_adapter = PagedStorage::new(paged_table);
-                    let indexes = &mut db.indexes;
+                let paged_table = database_storage.get_paged_table_mut(&from)
+                    .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+                let mut storage_adapter = PagedStorage::new(paged_table);
+                let indexes = &mut db.indexes;
 
-                    DmlExecutor::delete_with_storage(
-                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from, indexes
-                    )
-                } else {
-                    // Legacy storage: use Vec<Row>
-                    let table_ref = db.tables.get_mut(&from)
-                        .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
-                    let table_columns = table_ref.columns.clone();
-                    let mut storage_adapter = LegacyStorage::new(&mut table_ref.rows);
-                    let indexes = &mut db.indexes;
-
-                    DmlExecutor::delete_with_storage(
-                        &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from, indexes
-                    )
-                }
+                DmlExecutor::delete_with_storage(
+                    &table_columns, filter, &mut storage_adapter, storage, tx_manager, &from, indexes
+                )
             }
 
             // Query operations - delegate to QueriesExecutor
@@ -170,22 +123,18 @@ impl QueryExecutor {
                 limit,
                 offset,
             } => {
-                // Convert &mut DatabaseStorage to &DatabaseStorage for read-only SELECT
-                let db_storage_ref = database_storage.as_deref();
-                QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, db_storage_ref)
+                // v2.0.0: database_storage is always available
+                QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, Some(database_storage))
             }
             // Set operations (v1.10.0)
             Statement::Union { left, right, all } => {
-                let db_storage_ref = database_storage.as_deref();
-                QueriesExecutor::union(db, &*left, &*right, all, tx_manager, db_storage_ref)
+                QueriesExecutor::union(db, &*left, &*right, all, tx_manager, Some(database_storage))
             }
             Statement::Intersect { left, right } => {
-                let db_storage_ref = database_storage.as_deref();
-                QueriesExecutor::intersect(db, &*left, &*right, tx_manager, db_storage_ref)
+                QueriesExecutor::intersect(db, &*left, &*right, tx_manager, Some(database_storage))
             }
             Statement::Except { left, right } => {
-                let db_storage_ref = database_storage.as_deref();
-                QueriesExecutor::except(db, &*left, &*right, tx_manager, db_storage_ref)
+                QueriesExecutor::except(db, &*left, &*right, tx_manager, Some(database_storage))
             }
             Statement::CreateIndex { name, table, columns, unique, index_type } => {
                 super::index::IndexExecutor::create_index(db, name, table, columns, unique, index_type)
@@ -194,7 +143,7 @@ impl QueryExecutor {
                 super::index::IndexExecutor::drop_index(db, name)
             }
             Statement::Vacuum { table } => {
-                super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, database_storage)
+                super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, Some(database_storage))
             }
             Statement::Explain { statement } => {
                 let result = super::explain::ExplainExecutor::explain(db, &*statement)?;
