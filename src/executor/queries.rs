@@ -137,6 +137,11 @@ impl QueryExecutor {
         tx_manager: &TransactionManager,
         database_storage: Option<&crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
+        // v2.0.0: Check if 'from' is a system catalog
+        if super::system_catalogs::SystemCatalog::is_system_catalog(&from) {
+            return super::system_catalogs::SystemCatalog::query(&from, db);
+        }
+
         // Check if 'from' is a view (v1.10.0)
         if let Some(view_query) = db.views.get(&from) {
             // Parse the view's SQL

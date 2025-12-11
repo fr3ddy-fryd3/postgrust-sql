@@ -251,6 +251,12 @@ mod tests {
         Table::new("users".to_string(), columns)
     }
 
+    /// v2.0.0: Helper for tests - create temporary DatabaseStorage
+    fn create_test_storage() -> crate::storage::DatabaseStorage {
+        let temp_dir = std::env::temp_dir().join(format!("rustdb_test_{}", std::process::id()));
+        crate::storage::DatabaseStorage::new(temp_dir, 100).unwrap() // 100 pages buffer
+    }
+
     #[test]
     fn test_execute_create_table() {
         let mut db = Database::new("test".to_string());
@@ -277,7 +283,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
         assert!(db.get_table("users").is_some());
     }
@@ -293,7 +299,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
         assert!(db.get_table("users").is_none());
     }
@@ -315,7 +321,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         let table = db.get_table("users").unwrap();
@@ -339,7 +345,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         let table = db.get_table("users").unwrap();
@@ -379,7 +385,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(rows.len(), 2);
@@ -425,7 +431,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -461,7 +467,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns.len(), 2);
@@ -512,7 +518,7 @@ mod tests {
             )),
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -531,7 +537,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -574,7 +580,7 @@ mod tests {
             filter: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -590,7 +596,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2);
@@ -636,7 +642,7 @@ mod tests {
             )),
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -652,7 +658,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -694,7 +700,7 @@ mod tests {
             filter: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         assert!(matches!(result, QueryResult::Success(_)));
 
         // Verify using SELECT (respects MVCC visibility)
@@ -710,7 +716,7 @@ mod tests {
                 offset: None,
         };
 
-        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, select_stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 0);
@@ -748,7 +754,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -793,7 +799,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -852,7 +858,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -911,7 +917,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2);
@@ -960,7 +966,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 3);
@@ -1012,7 +1018,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 3);
@@ -1064,7 +1070,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2); // Only first 2 rows
@@ -1113,7 +1119,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 2);
@@ -1166,7 +1172,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1218,7 +1224,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1270,7 +1276,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1322,7 +1328,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1374,7 +1380,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1429,7 +1435,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1512,7 +1518,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns, vec!["category", "count"]);
@@ -1604,7 +1610,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns, vec!["category", "sum(price)"]);
@@ -1681,7 +1687,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None);
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage());
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1772,7 +1778,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, None).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1); // Only Electronics has items > 25

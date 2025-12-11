@@ -25,6 +25,7 @@ pub mod queries;
 pub mod vacuum;
 pub mod index;
 pub mod explain;  // v1.8.0
+pub mod system_catalogs;  // v2.0.0
 
 // Re-export main executor
 pub use dispatcher_executor::{QueryExecutor, QueryResult};
@@ -38,6 +39,7 @@ pub use queries::QueryExecutor as QueriesExecutor;
 pub use vacuum::VacuumExecutor;
 pub use index::IndexExecutor;
 pub use explain::ExplainExecutor;  // v1.8.0
+pub use system_catalogs::SystemCatalog;  // v2.0.0
 
 #[cfg(feature = "page_storage")]
 pub use storage_adapter::PagedStorage;
