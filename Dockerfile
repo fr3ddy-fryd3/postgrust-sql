@@ -28,7 +28,7 @@ RUN useradd -m -u 1000 rustdb
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/rustdb /app/rustdb
+COPY --from=builder /app/target/release/postgrustql /app/postgrustql
 
 # Create data directory
 RUN mkdir -p /app/data && chown -R rustdb:rustdb /app
@@ -39,4 +39,4 @@ USER rustdb
 EXPOSE 5432
 
 # Run the server
-CMD ["./rustdb"]
+CMD ["./postgrustql"]

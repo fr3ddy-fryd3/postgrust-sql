@@ -12,7 +12,7 @@ services:
       - rustdb-data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "5432"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/5432' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
