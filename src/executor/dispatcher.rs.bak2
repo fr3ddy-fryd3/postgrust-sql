@@ -302,7 +302,7 @@ mod tests {
         db: &mut Database,
         storage: &mut crate::storage::DatabaseStorage,
         tx_manager: &TransactionManager,
-        rows: &[(i64, &str, i64)],
+        rows: &[(i32, &str, i32)],
     ) {
         for (id, name, age) in rows {
             let insert = Statement::Insert {
