@@ -12,7 +12,7 @@ use crate::types::{DatabaseError, Value};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
-/// Hash index using HashMap for O(1) lookups
+/// Hash index using `HashMap` for O(1) lookups
 /// Supports single and composite keys (v1.9.0)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashIndex {
@@ -29,12 +29,14 @@ pub struct HashIndex {
 // Backward compatibility
 impl HashIndex {
     /// Get first column name (for backward compatibility)
+    #[must_use] 
     pub fn column_name(&self) -> &str {
         &self.column_names[0]
     }
 
     /// Check if this is a composite index
-    pub fn is_composite(&self) -> bool {
+    #[must_use] 
+    pub const fn is_composite(&self) -> bool {
         self.column_names.len() > 1
     }
 }
@@ -47,13 +49,13 @@ struct IndexKey(String);
 impl IndexKey {
     /// Create key from single value
     fn from_value(value: &Value) -> Self {
-        IndexKey(value.to_string())
+        Self(value.to_string())
     }
 
     /// Create composite key from multiple values (v1.9.0)
     fn from_values(values: &[Value]) -> Self {
-        let parts: Vec<String> = values.iter().map(|v| v.to_string()).collect();
-        IndexKey(parts.join("||"))
+        let parts: Vec<String> = values.iter().map(std::string::ToString::to_string).collect();
+        Self(parts.join("||"))
     }
 }
 
@@ -66,6 +68,7 @@ impl From<&Value> for IndexKey {
 
 impl HashIndex {
     /// Create a new hash index (single column)
+    #[must_use] 
     pub fn new(name: String, table_name: String, column_name: String, is_unique: bool) -> Self {
         Self {
             name,
@@ -77,6 +80,7 @@ impl HashIndex {
     }
 
     /// Create a new composite hash index (v1.9.0)
+    #[must_use] 
     pub fn new_composite(
         name: String,
         table_name: String,
@@ -107,7 +111,7 @@ impl HashIndex {
         }
 
         // Insert into hash map
-        self.map.entry(key).or_insert_with(Vec::new).push(row_index);
+        self.map.entry(key).or_default().push(row_index);
 
         Ok(())
     }
@@ -128,19 +132,22 @@ impl HashIndex {
     /// Search for a value in the index - O(1) average case
     ///
     /// Returns list of row indices that match the value
+    #[must_use] 
     pub fn search(&self, value: &Value) -> Vec<usize> {
         let key = IndexKey::from(value);
         self.map.get(&key).cloned().unwrap_or_default()
     }
 
     /// Get number of unique keys in index
+    #[must_use] 
     pub fn key_count(&self) -> usize {
         self.map.len()
     }
 
     /// Get total number of entries (including duplicates for non-unique)
+    #[must_use] 
     pub fn entry_count(&self) -> usize {
-        self.map.values().map(|v| v.len()).sum()
+        self.map.values().map(std::vec::Vec::len).sum()
     }
 
     // === Composite index methods (v1.9.0) ===
@@ -165,7 +172,7 @@ impl HashIndex {
         }
 
         // Insert into hash map
-        self.map.entry(key).or_insert_with(Vec::new).push(row_index);
+        self.map.entry(key).or_default().push(row_index);
         Ok(())
     }
 
@@ -186,6 +193,7 @@ impl HashIndex {
     }
 
     /// Search for rows with composite key match - O(1) average case
+    #[must_use] 
     pub fn search_composite(&self, values: &[Value]) -> Vec<usize> {
         if values.len() != self.column_names.len() {
             return Vec::new();

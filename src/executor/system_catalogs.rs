@@ -1,24 +1,24 @@
-/// System Catalogs for PostgreSQL compatibility (v2.0.0)
+/// System Catalogs for `PostgreSQL` compatibility (v2.0.0)
 ///
 /// Implements virtual tables:
-/// - pg_catalog.pg_class (tables, indexes, views)
-/// - pg_catalog.pg_attribute (columns)
-/// - pg_catalog.pg_index (index definitions)
-/// - pg_catalog.pg_type (data types)
-/// - pg_catalog.pg_namespace (schemas)
-/// - information_schema.tables
-/// - information_schema.columns
+/// - `pg_catalog.pg_class` (tables, indexes, views)
+/// - `pg_catalog.pg_attribute` (columns)
+/// - `pg_catalog.pg_index` (index definitions)
+/// - `pg_catalog.pg_type` (data types)
+/// - `pg_catalog.pg_namespace` (schemas)
+/// - `information_schema.tables`
+/// - `information_schema.columns`
 ///
-/// These are read-only metadata tables queried by psql, pg_dump, etc.
+/// These are read-only metadata tables queried by psql, `pg_dump`, etc.
 
 use crate::core::{Database, DatabaseError, DataType};
 use super::dispatcher_executor::QueryResult;
-use std::collections::HashMap;
 
 pub struct SystemCatalog;
 
 impl SystemCatalog {
     /// Check if table name is a system catalog
+    #[must_use] 
     pub fn is_system_catalog(table_name: &str) -> bool {
         matches!(
             table_name,
@@ -49,7 +49,7 @@ impl SystemCatalog {
         }
     }
 
-    /// pg_catalog.pg_class - Tables, indexes, views
+    /// `pg_catalog.pg_class` - Tables, indexes, views
     ///
     /// Simplified schema:
     /// - oid: Object ID (fake)
@@ -103,7 +103,7 @@ impl SystemCatalog {
         Ok(QueryResult::Rows(rows, columns))
     }
 
-    /// pg_catalog.pg_attribute - Columns
+    /// `pg_catalog.pg_attribute` - Columns
     ///
     /// Schema:
     /// - attrelid: Table OID
@@ -140,7 +140,7 @@ impl SystemCatalog {
         Ok(QueryResult::Rows(rows, columns))
     }
 
-    /// pg_catalog.pg_index - Index definitions
+    /// `pg_catalog.pg_index` - Index definitions
     ///
     /// Schema:
     /// - indexrelid: Index OID
@@ -159,7 +159,7 @@ impl SystemCatalog {
         let mut index_oid = 17000; // Arbitrary offset
         let table_oid = 16384; // Match pg_class
 
-        for (_index_name, index) in db.indexes.iter() {
+        for index in db.indexes.values() {
             // Get column names and represent as column numbers
             let column_names = index.column_names();
             // For now, just use sequential numbers (proper impl would look up actual positions)
@@ -180,7 +180,7 @@ impl SystemCatalog {
         Ok(QueryResult::Rows(rows, columns))
     }
 
-    /// pg_catalog.pg_type - Data types
+    /// `pg_catalog.pg_type` - Data types
     ///
     /// Returns all supported data types
     fn pg_type() -> Result<QueryResult, DatabaseError> {
@@ -219,7 +219,7 @@ impl SystemCatalog {
         Ok(QueryResult::Rows(rows, columns))
     }
 
-    /// pg_catalog.pg_namespace - Schemas
+    /// `pg_catalog.pg_namespace` - Schemas
     ///
     /// For now, only 'public' schema
     fn pg_namespace() -> Result<QueryResult, DatabaseError> {
@@ -231,7 +231,7 @@ impl SystemCatalog {
         Ok(QueryResult::Rows(rows, columns))
     }
 
-    /// information_schema.tables - Standard SQL metadata
+    /// `information_schema.tables` - Standard SQL metadata
     fn information_schema_tables(db: &Database) -> Result<QueryResult, DatabaseError> {
         let columns = vec![
             "table_catalog".to_string(),
@@ -265,7 +265,7 @@ impl SystemCatalog {
         Ok(QueryResult::Rows(rows, columns))
     }
 
-    /// information_schema.columns - Column metadata
+    /// `information_schema.columns` - Column metadata
     fn information_schema_columns(db: &Database) -> Result<QueryResult, DatabaseError> {
         let columns = vec![
             "table_catalog".to_string(),
@@ -296,8 +296,8 @@ impl SystemCatalog {
         Ok(QueryResult::Rows(rows, columns))
     }
 
-    /// Convert DataType to PostgreSQL OID
-    fn data_type_to_oid(data_type: &DataType) -> i32 {
+    /// Convert `DataType` to `PostgreSQL` OID
+    const fn data_type_to_oid(data_type: &DataType) -> i32 {
         match data_type {
             DataType::Boolean => 16,
             DataType::SmallInt => 21,
@@ -320,7 +320,7 @@ impl SystemCatalog {
         }
     }
 
-    /// Convert DataType to SQL type name
+    /// Convert `DataType` to SQL type name
     fn data_type_to_sql_name(data_type: &DataType) -> String {
         match data_type {
             DataType::Boolean => "boolean".to_string(),
@@ -330,11 +330,11 @@ impl SystemCatalog {
             DataType::BigSerial => "bigserial".to_string(),
             DataType::Real => "real".to_string(),
             DataType::Numeric { precision, scale } => {
-                format!("numeric({},{})", precision, scale)
+                format!("numeric({precision},{scale})")
             }
             DataType::Text => "text".to_string(),
-            DataType::Varchar { max_length } => format!("varchar({})", max_length),
-            DataType::Char { length } => format!("char({})", length),
+            DataType::Varchar { max_length } => format!("varchar({max_length})"),
+            DataType::Char { length } => format!("char({length})"),
             DataType::Date => "date".to_string(),
             DataType::Timestamp => "timestamp".to_string(),
             DataType::TimestampTz => "timestamptz".to_string(),

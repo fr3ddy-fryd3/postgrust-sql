@@ -165,7 +165,7 @@ pub fn value(input: &str) -> IResult<&str, Value> {
                 if let Ok(d) = Decimal::from_str(s) {
                     Ok(Value::Numeric(d))
                 } else {
-                    Ok(Value::Real(s.parse().map_err(|e| format!("{:?}", e))?))
+                    Ok(Value::Real(s.parse().map_err(|e| format!("{e:?}"))?))
                 }
             }
         ),
@@ -174,8 +174,8 @@ pub fn value(input: &str) -> IResult<&str, Value> {
         map_res(
             recognize(pair(opt(char('-')), digit1)),
             |s: &str| -> Result<Value, String> {
-                let num = s.parse::<i64>().map_err(|e| format!("{:?}", e))?;
-                if num >= i16::MIN as i64 && num <= i16::MAX as i64 {
+                let num = s.parse::<i64>().map_err(|e| format!("{e:?}"))?;
+                if i16::try_from(num).is_ok() {
                     Ok(Value::SmallInt(num as i16))
                 } else {
                     Ok(Value::Integer(num))

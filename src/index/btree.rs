@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// B-tree index for single or multiple columns (v1.9.0)
 ///
-/// Current implementation uses Rust's BTreeMap as foundation.
+/// Current implementation uses Rust's `BTreeMap` as foundation.
 /// Maps column value(s) to row indices.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeIndex {
@@ -30,7 +30,7 @@ pub struct BTreeIndex {
     /// Is this a unique index?
     pub is_unique: bool,
 
-    /// The actual index: Value(s) -> Vec<row_index>
+    /// The actual index: Value(s) -> Vec<`row_index`>
     /// Vec allows multiple rows with same value (non-unique indexes)
     tree: BTreeMap<IndexKey, Vec<usize>>,
 }
@@ -38,17 +38,19 @@ pub struct BTreeIndex {
 // Keep backward compatibility property
 impl BTreeIndex {
     /// Get first column name (for backward compatibility with single-column APIs)
+    #[must_use] 
     pub fn column_name(&self) -> &str {
         &self.column_names[0]
     }
 
     /// Check if this is a composite index
-    pub fn is_composite(&self) -> bool {
+    #[must_use] 
+    pub const fn is_composite(&self) -> bool {
         self.column_names.len() > 1
     }
 }
 
-/// Wrapper for Value(s) to make it sortable in BTreeMap
+/// Wrapper for Value(s) to make it sortable in `BTreeMap`
 /// Supports both single and composite keys (v1.9.0)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct IndexKey(String);
@@ -58,16 +60,16 @@ impl IndexKey {
     fn from_value(value: &Value) -> Self {
         // Convert Value to sortable string representation
         match value {
-            Value::Integer(i) => IndexKey(format!("I{:020}", i)),
-            Value::SmallInt(i) => IndexKey(format!("S{:020}", i)),
-            Value::Text(s) => IndexKey(format!("T{}", s)),
-            Value::Char(s) => IndexKey(format!("C{}", s)),
-            Value::Boolean(b) => IndexKey(format!("BOOL{}", b)),
-            Value::Real(f) => IndexKey(format!("R{:020.10}", f)),
-            Value::Null => IndexKey("NULL".to_string()),
-            Value::Uuid(u) => IndexKey(format!("UUID{}", u)),
+            Value::Integer(i) => Self(format!("I{i:020}")),
+            Value::SmallInt(i) => Self(format!("S{i:020}")),
+            Value::Text(s) => Self(format!("T{s}")),
+            Value::Char(s) => Self(format!("C{s}")),
+            Value::Boolean(b) => Self(format!("BOOL{b}")),
+            Value::Real(f) => Self(format!("R{f:020.10}")),
+            Value::Null => Self("NULL".to_string()),
+            Value::Uuid(u) => Self(format!("UUID{u}")),
             // Add more types as needed
-            _ => IndexKey(format!("{:?}", value)),
+            _ => Self(format!("{value:?}")),
         }
     }
 
@@ -76,7 +78,7 @@ impl IndexKey {
         let parts: Vec<String> = values.iter().map(|v| {
             Self::from_value(v).0
         }).collect();
-        IndexKey(parts.join("||"))  // Use || as separator
+        Self(parts.join("||"))  // Use || as separator
     }
 }
 
@@ -89,6 +91,7 @@ impl From<&Value> for IndexKey {
 
 impl BTreeIndex {
     /// Create a new B-tree index (single column)
+    #[must_use] 
     pub fn new(
         name: String,
         table_name: String,
@@ -105,7 +108,8 @@ impl BTreeIndex {
     }
 
     /// Create a new composite B-tree index (v1.9.0)
-    pub fn new_composite(
+    #[must_use] 
+    pub const fn new_composite(
         name: String,
         table_name: String,
         column_names: Vec<String>,
@@ -133,7 +137,7 @@ impl BTreeIndex {
             ));
         }
 
-        self.tree.entry(key).or_insert_with(Vec::new).push(row_index);
+        self.tree.entry(key).or_default().push(row_index);
         Ok(())
     }
 
@@ -154,25 +158,29 @@ impl BTreeIndex {
     ///
     /// Returns list of row indices that match the value.
     /// Empty vec if not found.
+    #[must_use] 
     pub fn search(&self, value: &Value) -> Vec<usize> {
         let key = IndexKey::from(value);
         self.tree.get(&key).cloned().unwrap_or_default()
     }
 
     /// Check if index contains a value
+    #[must_use] 
     pub fn contains(&self, value: &Value) -> bool {
         let key = IndexKey::from(value);
         self.tree.contains_key(&key)
     }
 
     /// Get number of distinct keys in index
+    #[must_use] 
     pub fn key_count(&self) -> usize {
         self.tree.len()
     }
 
     /// Get total number of entries (including duplicates for non-unique)
+    #[must_use] 
     pub fn entry_count(&self) -> usize {
-        self.tree.values().map(|v| v.len()).sum()
+        self.tree.values().map(std::vec::Vec::len).sum()
     }
 
     /// Clear all entries from index
@@ -199,7 +207,7 @@ impl BTreeIndex {
             ));
         }
 
-        self.tree.entry(key).or_insert_with(Vec::new).push(row_index);
+        self.tree.entry(key).or_default().push(row_index);
         Ok(())
     }
 
@@ -220,6 +228,7 @@ impl BTreeIndex {
     }
 
     /// Search for rows with composite key match
+    #[must_use] 
     pub fn search_composite(&self, values: &[Value]) -> Vec<usize> {
         if values.len() != self.column_names.len() {
             return Vec::new();
@@ -231,6 +240,7 @@ impl BTreeIndex {
 
     /// Search with prefix match (for composite indexes)
     /// E.g., for index on (city, age), can search just by city
+    #[must_use] 
     pub fn search_prefix(&self, values: &[Value]) -> Vec<usize> {
         if values.is_empty() || values.len() > self.column_names.len() {
             return Vec::new();
@@ -241,7 +251,7 @@ impl BTreeIndex {
 
         // Find all keys that start with this prefix
         let mut result = Vec::new();
-        for (key, indices) in self.tree.iter() {
+        for (key, indices) in &self.tree {
             if key.0.starts_with(prefix_str) {
                 result.extend_from_slice(indices);
             }

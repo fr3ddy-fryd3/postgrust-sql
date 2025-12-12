@@ -10,6 +10,7 @@ pub struct TransactionManager {
 }
 
 impl TransactionManager {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             // Start from 1 (0 is reserved for initial data)
@@ -18,12 +19,14 @@ impl TransactionManager {
     }
 
     /// Generates a new unique transaction ID
+    #[must_use] 
     pub fn begin_transaction(&self) -> u64 {
         self.next_tx_id.fetch_add(1, Ordering::SeqCst)
     }
 
     /// Gets the current transaction ID (for visibility checks)
     /// This returns the next ID that will be assigned
+    #[must_use] 
     pub fn current_tx_id(&self) -> u64 {
         self.next_tx_id.load(Ordering::SeqCst)
     }
@@ -32,10 +35,11 @@ impl TransactionManager {
     /// Used by VACUUM to determine safe cleanup horizon
     ///
     /// Simplified implementation for v1.6.0:
-    /// Returns current_tx_id - 1, assuming all previous transactions are committed.
+    /// Returns `current_tx_id` - 1, assuming all previous transactions are committed.
     /// This works for single-connection scenarios but isn't safe for concurrent transactions.
     ///
-    /// TODO v1.7: Track active transactions with HashSet<u64> for proper multi-connection support
+    /// TODO v1.7: Track active transactions with `HashSet`<u64> for proper multi-connection support
+    #[must_use] 
     pub fn get_oldest_active_tx(&self) -> u64 {
         let current = self.current_tx_id();
         // Assume all transactions before current are committed

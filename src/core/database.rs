@@ -15,6 +15,7 @@ pub struct Database {
 }
 
 impl Database {
+    #[must_use] 
     pub fn new(name: String) -> Self {
         Self {
             name,
@@ -27,24 +28,26 @@ impl Database {
 
     pub fn create_enum(&mut self, name: String, values: Vec<String>) -> Result<(), DatabaseError> {
         if self.enums.contains_key(&name) {
-            return Err(DatabaseError::ParseError(format!("Enum '{}' already exists", name)));
+            return Err(DatabaseError::ParseError(format!("Enum '{name}' already exists")));
         }
         self.enums.insert(name, values);
         Ok(())
     }
 
+    #[must_use] 
     pub fn get_enum(&self, name: &str) -> Option<&Vec<String>> {
         self.enums.get(name)
     }
 
     pub fn create_table(&mut self, table: Table) -> Result<(), DatabaseError> {
         if self.tables.contains_key(&table.name) {
-            return Err(DatabaseError::TableAlreadyExists(table.name.clone()));
+            return Err(DatabaseError::TableAlreadyExists(table.name));
         }
         self.tables.insert(table.name.clone(), table);
         Ok(())
     }
 
+    #[must_use] 
     pub fn get_table(&self, name: &str) -> Option<&Table> {
         self.tables.get(name)
     }

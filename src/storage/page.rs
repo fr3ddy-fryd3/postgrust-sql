@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{DatabaseError, Row};
 
-/// Page size (8 KB, same as PostgreSQL)
+/// Page size (8 KB, same as `PostgreSQL`)
 pub const PAGE_SIZE: usize = 8192;
 
 /// Page ID - uniquely identifies a page
@@ -12,7 +12,8 @@ pub struct PageId {
 }
 
 impl PageId {
-    pub fn new(table_id: u32, page_number: u32) -> Self {
+    #[must_use] 
+    pub const fn new(table_id: u32, page_number: u32) -> Self {
         Self { table_id, page_number }
     }
 }
@@ -46,12 +47,13 @@ pub struct PageHeader {
 }
 
 impl PageHeader {
-    pub fn new(page_id: PageId) -> Self {
+    #[must_use] 
+    pub const fn new(page_id: PageId) -> Self {
         Self {
             page_id,
-            free_space: (PAGE_SIZE - std::mem::size_of::<PageHeader>()) as u16,
+            free_space: (PAGE_SIZE - std::mem::size_of::<Self>()) as u16,
             slot_count: 0,
-            lower: std::mem::size_of::<PageHeader>() as u16,
+            lower: std::mem::size_of::<Self>() as u16,
             upper: PAGE_SIZE as u16,
             checksum: 0,
         }
@@ -71,6 +73,7 @@ pub struct Page {
 
 impl Page {
     /// Create a new empty page
+    #[must_use] 
     pub fn new(page_id: PageId) -> Self {
         let mut data = vec![0u8; PAGE_SIZE];
         let header = PageHeader::new(page_id);
@@ -87,12 +90,14 @@ impl Page {
     }
 
     /// Get available free space
-    pub fn free_space(&self) -> u16 {
+    #[must_use] 
+    pub const fn free_space(&self) -> u16 {
         self.header.upper.saturating_sub(self.header.lower)
     }
 
     /// Can this page fit a row of given size?
-    pub fn can_fit(&self, row_size: usize) -> bool {
+    #[must_use] 
+    pub const fn can_fit(&self, row_size: usize) -> bool {
         let slot_size = std::mem::size_of::<Slot>();
         let needed = row_size + slot_size;
         self.free_space() as usize >= needed
@@ -108,8 +113,7 @@ impl Page {
 
         // Check if we have space
         if !self.can_fit(row_size) {
-            return Err(DatabaseError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(DatabaseError::Io(std::io::Error::other(
                 "Page is full",
             )));
         }
@@ -201,6 +205,7 @@ impl Page {
     }
 
     /// Get all rows in this page
+    #[must_use] 
     pub fn get_all_rows(&self) -> Vec<Row> {
         self.slots
             .iter()

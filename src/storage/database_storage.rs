@@ -5,11 +5,11 @@ use crate::types::{DatabaseError, Row};
 use super::page_manager::PageManager;
 use super::paged_table::PagedTable;
 
-/// DatabaseStorage - manages page-based storage for all tables in a database
+/// `DatabaseStorage` - manages page-based storage for all tables in a database
 pub struct DatabaseStorage {
     /// Page manager (shared across all tables)
     page_manager: Arc<Mutex<PageManager>>,
-    /// PagedTable instances: table_name -> (table_id, PagedTable)
+    /// `PagedTable` instances: `table_name` -> (`table_id`, `PagedTable`)
     paged_tables: HashMap<String, (u32, PagedTable)>,
     /// Next available table ID
     next_table_id: u32,
@@ -60,6 +60,7 @@ impl DatabaseStorage {
     }
 
     /// Get reference to a paged table
+    #[must_use] 
     pub fn get_paged_table(&self, table_name: &str) -> Option<&PagedTable> {
         self.paged_tables.get(table_name).map(|(_, pt)| pt)
     }
@@ -106,18 +107,21 @@ impl DatabaseStorage {
     }
 
     /// Get statistics for a table
+    #[must_use] 
     pub fn get_table_stats(&self, table_name: &str) -> Option<super::paged_table::PagedTableStats> {
-        self.get_paged_table(table_name).map(|pt| pt.stats())
+        self.get_paged_table(table_name).map(super::paged_table::PagedTable::stats)
     }
 
     /// Get list of all paged tables
+    #[must_use] 
     pub fn list_tables(&self) -> Vec<String> {
         self.paged_tables.keys().cloned().collect()
     }
 
     /// Get row count for a table
+    #[must_use] 
     pub fn row_count(&self, table_name: &str) -> Option<usize> {
-        self.get_paged_table(table_name).map(|pt| pt.row_count())
+        self.get_paged_table(table_name).map(super::paged_table::PagedTable::row_count)
     }
 }
 

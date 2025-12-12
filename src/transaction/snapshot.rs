@@ -10,7 +10,8 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             tx_id: None,
             snapshot: None,
@@ -39,12 +40,14 @@ impl Transaction {
     }
 
     /// Checks if there's an active transaction
-    pub fn is_active(&self) -> bool {
+    #[must_use] 
+    pub const fn is_active(&self) -> bool {
         self.tx_id.is_some()
     }
 
     /// Gets the current transaction ID
-    pub fn tx_id(&self) -> Option<u64> {
+    #[must_use] 
+    pub const fn tx_id(&self) -> Option<u64> {
         self.tx_id
     }
 }

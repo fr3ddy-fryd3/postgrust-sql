@@ -1,7 +1,7 @@
 /// Index structures for fast data access
 ///
 /// Implements B-tree and Hash indexes.
-/// Future: bitmap indexes, GiST, GIN, etc.
+/// Future: bitmap indexes, `GiST`, GIN, etc.
 
 pub mod btree;
 pub mod hash;
@@ -22,15 +22,16 @@ pub enum IndexType {
 
 impl Default for IndexType {
     fn default() -> Self {
-        IndexType::BTree
+        Self::BTree
     }
 }
 
 impl IndexType {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            IndexType::BTree => "btree",
-            IndexType::Hash => "hash",
+            Self::BTree => "btree",
+            Self::Hash => "hash",
         }
     }
 }
@@ -43,103 +44,113 @@ pub enum Index {
 }
 
 impl Index {
+    #[must_use] 
     pub fn name(&self) -> &str {
         match self {
-            Index::BTree(idx) => &idx.name,
-            Index::Hash(idx) => &idx.name,
+            Self::BTree(idx) => &idx.name,
+            Self::Hash(idx) => &idx.name,
         }
     }
 
+    #[must_use] 
     pub fn table_name(&self) -> &str {
         match self {
-            Index::BTree(idx) => &idx.table_name,
-            Index::Hash(idx) => &idx.table_name,
+            Self::BTree(idx) => &idx.table_name,
+            Self::Hash(idx) => &idx.table_name,
         }
     }
 
+    #[must_use] 
     pub fn column_name(&self) -> &str {
         match self {
-            Index::BTree(idx) => idx.column_name(),
-            Index::Hash(idx) => idx.column_name(),
+            Self::BTree(idx) => idx.column_name(),
+            Self::Hash(idx) => idx.column_name(),
         }
     }
 
-    pub fn is_unique(&self) -> bool {
+    #[must_use] 
+    pub const fn is_unique(&self) -> bool {
         match self {
-            Index::BTree(idx) => idx.is_unique,
-            Index::Hash(idx) => idx.is_unique,
+            Self::BTree(idx) => idx.is_unique,
+            Self::Hash(idx) => idx.is_unique,
         }
     }
 
-    pub fn index_type(&self) -> IndexType {
+    #[must_use] 
+    pub const fn index_type(&self) -> IndexType {
         match self {
-            Index::BTree(_) => IndexType::BTree,
-            Index::Hash(_) => IndexType::Hash,
+            Self::BTree(_) => IndexType::BTree,
+            Self::Hash(_) => IndexType::Hash,
         }
     }
 
     pub fn insert(&mut self, value: &crate::types::Value, row_index: usize) -> Result<(), crate::types::DatabaseError> {
         match self {
-            Index::BTree(idx) => idx.insert(value, row_index),
-            Index::Hash(idx) => idx.insert(value, row_index),
+            Self::BTree(idx) => idx.insert(value, row_index),
+            Self::Hash(idx) => idx.insert(value, row_index),
         }
     }
 
     pub fn delete(&mut self, value: &crate::types::Value, row_index: usize) {
         match self {
-            Index::BTree(idx) => idx.delete(value, row_index),
-            Index::Hash(idx) => idx.delete(value, row_index),
+            Self::BTree(idx) => idx.delete(value, row_index),
+            Self::Hash(idx) => idx.delete(value, row_index),
         }
     }
 
+    #[must_use] 
     pub fn search(&self, value: &crate::types::Value) -> Vec<usize> {
         match self {
-            Index::BTree(idx) => idx.search(value),
-            Index::Hash(idx) => idx.search(value),
+            Self::BTree(idx) => idx.search(value),
+            Self::Hash(idx) => idx.search(value),
         }
     }
 
     // === Composite index methods (v1.9.0) ===
 
+    #[must_use] 
     pub fn column_names(&self) -> &[String] {
         match self {
-            Index::BTree(idx) => &idx.column_names,
-            Index::Hash(idx) => &idx.column_names,
+            Self::BTree(idx) => &idx.column_names,
+            Self::Hash(idx) => &idx.column_names,
         }
     }
 
-    pub fn is_composite(&self) -> bool {
+    #[must_use] 
+    pub const fn is_composite(&self) -> bool {
         match self {
-            Index::BTree(idx) => idx.is_composite(),
-            Index::Hash(idx) => idx.is_composite(),
+            Self::BTree(idx) => idx.is_composite(),
+            Self::Hash(idx) => idx.is_composite(),
         }
     }
 
     pub fn insert_composite(&mut self, values: &[crate::types::Value], row_index: usize) -> Result<(), crate::types::DatabaseError> {
         match self {
-            Index::BTree(idx) => idx.insert_composite(values, row_index),
-            Index::Hash(idx) => idx.insert_composite(values, row_index),
+            Self::BTree(idx) => idx.insert_composite(values, row_index),
+            Self::Hash(idx) => idx.insert_composite(values, row_index),
         }
     }
 
     pub fn delete_composite(&mut self, values: &[crate::types::Value], row_index: usize) {
         match self {
-            Index::BTree(idx) => idx.delete_composite(values, row_index),
-            Index::Hash(idx) => idx.delete_composite(values, row_index),
+            Self::BTree(idx) => idx.delete_composite(values, row_index),
+            Self::Hash(idx) => idx.delete_composite(values, row_index),
         }
     }
 
+    #[must_use] 
     pub fn search_composite(&self, values: &[crate::types::Value]) -> Vec<usize> {
         match self {
-            Index::BTree(idx) => idx.search_composite(values),
-            Index::Hash(idx) => idx.search_composite(values),
+            Self::BTree(idx) => idx.search_composite(values),
+            Self::Hash(idx) => idx.search_composite(values),
         }
     }
 
     /// Search with prefix match (only for B-tree composite indexes)
+    #[must_use] 
     pub fn search_prefix(&self, values: &[crate::types::Value]) -> Option<Vec<usize>> {
         match self {
-            Index::BTree(idx) if idx.is_composite() => Some(idx.search_prefix(values)),
+            Self::BTree(idx) if idx.is_composite() => Some(idx.search_prefix(values)),
             _ => None,  // Hash indexes don't support prefix search
         }
     }

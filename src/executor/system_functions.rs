@@ -1,11 +1,11 @@
-/// System Functions for PostgreSQL compatibility (v2.0.0)
+/// System Functions for `PostgreSQL` compatibility (v2.0.0)
 ///
-/// Implements special functions that PostgreSQL clients expect:
-/// - version() - Database version string
-/// - current_database() - Current database name
-/// - pg_table_size(table_name) - Table size in bytes
-/// - current_user - Current user name
-/// - current_schema() - Current schema name
+/// Implements special functions that `PostgreSQL` clients expect:
+/// - `version()` - Database version string
+/// - `current_database()` - Current database name
+/// - `pg_table_size(table_name)` - Table size in bytes
+/// - `current_user` - Current user name
+/// - `current_schema()` - Current schema name
 ///
 /// These functions are intercepted in SELECT queries and evaluated specially.
 
@@ -15,6 +15,7 @@ pub struct SystemFunctions;
 
 impl SystemFunctions {
     /// Check if function name is a system function
+    #[must_use] 
     pub fn is_system_function(name: &str) -> bool {
         matches!(
             name.to_lowercase().as_str(),
@@ -53,26 +54,23 @@ impl SystemFunctions {
                 Self::pg_table_size(&args[0], db, database_storage)
             }
             _ => Err(DatabaseError::ParseError(format!(
-                "Unknown system function: {}",
-                name
+                "Unknown system function: {name}"
             ))),
         }
     }
 
-    /// version() - Return database version string
+    /// `version()` - Return database version string
     ///
-    /// Format: RustDB 2.0.0 on <platform>
+    /// Format: `RustDB` 2.0.0 on <platform>
     fn version() -> String {
         let platform = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
         format!(
-            "RustDB 2.0.0 on {}-{}, Rust/LLVM",
-            platform,
-            arch
+            "RustDB 2.0.0 on {platform}-{arch}, Rust/LLVM"
         )
     }
 
-    /// pg_table_size(table_name) - Return table size in bytes
+    /// `pg_table_size(table_name)` - Return table size in bytes
     ///
     /// Returns approximate size based on row count and average row size
     fn pg_table_size(

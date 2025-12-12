@@ -96,7 +96,7 @@ impl ConditionEvaluator {
         columns
             .iter()
             .position(|c| c.name == col_name)
-            .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col_name)))
+            .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))
     }
 
     /// Compare two values for greater-than
@@ -107,8 +107,8 @@ impl ConditionEvaluator {
             (Value::Real(x), Value::Real(y)) => Ok(x > y),
             (Value::Text(x), Value::Text(y)) => Ok(x > y),
             // Cross-type numeric comparisons
-            (Value::Integer(x), Value::SmallInt(y)) => Ok(*x > *y as i64),
-            (Value::SmallInt(x), Value::Integer(y)) => Ok((*x as i64) > *y),
+            (Value::Integer(x), Value::SmallInt(y)) => Ok(*x > i64::from(*y)),
+            (Value::SmallInt(x), Value::Integer(y)) => Ok(i64::from(*x) > *y),
             _ => Err(DatabaseError::TypeMismatch),
         }
     }
@@ -121,8 +121,8 @@ impl ConditionEvaluator {
             (Value::Real(x), Value::Real(y)) => Ok(x < y),
             (Value::Text(x), Value::Text(y)) => Ok(x < y),
             // Cross-type numeric comparisons
-            (Value::Integer(x), Value::SmallInt(y)) => Ok(*x < *y as i64),
-            (Value::SmallInt(x), Value::Integer(y)) => Ok((*x as i64) < *y),
+            (Value::Integer(x), Value::SmallInt(y)) => Ok(*x < i64::from(*y)),
+            (Value::SmallInt(x), Value::Integer(y)) => Ok(i64::from(*x) < *y),
             _ => Err(DatabaseError::TypeMismatch),
         }
     }

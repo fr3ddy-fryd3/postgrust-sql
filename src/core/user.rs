@@ -15,6 +15,7 @@ pub struct User {
 }
 
 impl User {
+    #[must_use] 
     pub fn new(username: String, password: &str, is_superuser: bool) -> Self {
         Self {
             username,
@@ -26,6 +27,7 @@ impl User {
     }
 
     /// Хэширует пароль с использованием SHA-256
+    #[must_use] 
     pub fn hash_password(password: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(password.as_bytes());
@@ -33,6 +35,7 @@ impl User {
     }
 
     /// Проверяет пароль
+    #[must_use] 
     pub fn verify_password(&self, password: &str) -> bool {
         self.password_hash == Self::hash_password(password)
     }

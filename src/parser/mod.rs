@@ -71,10 +71,10 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
             if remaining.trim().is_empty() {
                 Ok(stmt)
             } else {
-                Err(format!("Unexpected input after statement: {}", remaining))
+                Err(format!("Unexpected input after statement: {remaining}"))
             }
         }
-        Err(e) => Err(format!("Parse error: {:?}", e)),
+        Err(e) => Err(format!("Parse error: {e:?}")),
     }
 }
 

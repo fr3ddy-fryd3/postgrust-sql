@@ -83,8 +83,8 @@ pub fn create_database(input: &str) -> IResult<&str, Statement> {
     )))(input)?;
 
     Ok((input, Statement::CreateDatabase {
-        name: name.to_string(),
-        owner: owner.map(|s| s.to_string()),
+        name,
+        owner,
     }))
 }
 
@@ -93,7 +93,7 @@ pub fn drop_database(input: &str) -> IResult<&str, Statement> {
     let (input, name) = ws(identifier)(input)?;
 
     Ok((input, Statement::DropDatabase {
-        name: name.to_string(),
+        name,
     }))
 }
 
@@ -105,7 +105,7 @@ pub fn create_user(input: &str) -> IResult<&str, Statement> {
     let (input, is_superuser) = opt(ws(tag_no_case("SUPERUSER")))(input)?;
 
     Ok((input, Statement::CreateUser {
-        username: username.to_string(),
+        username,
         password,
         is_superuser: is_superuser.is_some(),
     }))
@@ -116,7 +116,7 @@ pub fn drop_user(input: &str) -> IResult<&str, Statement> {
     let (input, username) = ws(identifier)(input)?;
 
     Ok((input, Statement::DropUser {
-        username: username.to_string(),
+        username,
     }))
 }
 
@@ -127,7 +127,7 @@ pub fn alter_user(input: &str) -> IResult<&str, Statement> {
     let (input, password) = ws(string_literal)(input)?;
 
     Ok((input, Statement::AlterUser {
-        username: username.to_string(),
+        username,
         password,
     }))
 }
@@ -154,8 +154,8 @@ pub fn grant(input: &str) -> IResult<&str, Statement> {
 
     Ok((input, Statement::Grant {
         privilege,
-        on_database: db_name.to_string(),
-        to_user: username.to_string(),
+        on_database: db_name,
+        to_user: username,
     }))
 }
 
@@ -169,8 +169,8 @@ pub fn revoke(input: &str) -> IResult<&str, Statement> {
 
     Ok((input, Statement::Revoke {
         privilege,
-        on_database: db_name.to_string(),
-        from_user: username.to_string(),
+        on_database: db_name,
+        from_user: username,
     }))
 }
 
@@ -245,10 +245,10 @@ pub fn alter_table(input: &str) -> IResult<&str, Statement> {
 /// Parse CREATE INDEX statement
 ///
 /// Syntax:
-/// - CREATE INDEX idx_name ON table(column);
-/// - CREATE UNIQUE INDEX idx_name ON table(column);
-/// - CREATE INDEX idx_name ON table(column) USING HASH;
-/// - CREATE INDEX idx_name ON table(column) USING BTREE;
+/// - CREATE INDEX `idx_name` ON table(column);
+/// - CREATE UNIQUE INDEX `idx_name` ON table(column);
+/// - CREATE INDEX `idx_name` ON table(column) USING HASH;
+/// - CREATE INDEX `idx_name` ON table(column) USING BTREE;
 pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
     let (input, _) = ws(tag_no_case("CREATE"))(input)?;
 
@@ -276,8 +276,8 @@ pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
     })(input)?;
 
     let index_type = match index_type.as_deref() {
-        Some("hash") | Some("HASH") => crate::index::IndexType::Hash,
-        Some("btree") | Some("BTREE") => crate::index::IndexType::BTree,
+        Some("hash" | "HASH") => crate::index::IndexType::Hash,
+        Some("btree" | "BTREE") => crate::index::IndexType::BTree,
         None => crate::index::IndexType::BTree, // default
         _ => crate::index::IndexType::BTree, // invalid type defaults to btree
     };
@@ -294,7 +294,7 @@ pub fn parse_create_index(input: &str) -> IResult<&str, Statement> {
 /// Parse DROP INDEX statement
 ///
 /// Syntax:
-/// - DROP INDEX idx_name;
+/// - DROP INDEX `idx_name`;
 pub fn parse_drop_index(input: &str) -> IResult<&str, Statement> {
     let (input, _) = ws(tag_no_case("DROP INDEX"))(input)?;
     let (input, name) = ws(identifier)(input)?;
@@ -306,7 +306,7 @@ pub fn parse_drop_index(input: &str) -> IResult<&str, Statement> {
 ///
 /// Syntax:
 /// - VACUUM;              -- vacuum all tables
-/// - VACUUM table_name;   -- vacuum specific table
+/// - VACUUM `table_name`;   -- vacuum specific table
 pub fn parse_vacuum(input: &str) -> IResult<&str, Statement> {
     let (input, _) = ws(tag_no_case("VACUUM"))(input)?;
 

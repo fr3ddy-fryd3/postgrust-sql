@@ -20,7 +20,7 @@ struct SessionContext {
 }
 
 impl SessionContext {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             username: String::new(),
             database_name: String::new(),
@@ -64,7 +64,7 @@ impl Server {
 
                     // Проверяем, есть ли суперпользователь
                     if !existing.users.contains_key(superuser) {
-                        println!("  - Creating superuser: {}", superuser);
+                        println!("  - Creating superuser: {superuser}");
                         existing.users.insert(
                             superuser.to_string(),
                             crate::types::User::new(superuser.to_string(), password, true),
@@ -73,7 +73,7 @@ impl Server {
 
                     // Проверяем, есть ли начальная БД
                     if !existing.databases.contains_key(initial_db) {
-                        println!("  - Creating initial database: {}", initial_db);
+                        println!("  - Creating initial database: {initial_db}");
                         existing.create_database(initial_db, superuser)?;
                     }
 
@@ -82,8 +82,8 @@ impl Server {
                 _ => {
                     // Создаем новый
                     println!("✓ Initializing new server instance");
-                    println!("  - Superuser: {}", superuser);
-                    println!("  - Initial database: {}", initial_db);
+                    println!("  - Superuser: {superuser}");
+                    println!("  - Initial database: {initial_db}");
                     ServerInstance::initialize(superuser, password, initial_db)
                 }
             }
@@ -110,7 +110,7 @@ impl Server {
                     Some(Arc::new(Mutex::new(db_storage)))
                 }
                 Err(e) => {
-                    eprintln!("✗ Failed to initialize page storage: {}", e);
+                    eprintln!("✗ Failed to initialize page storage: {e}");
                     eprintln!("  Falling back to legacy Vec<Row> storage");
                     None
                 }
@@ -133,13 +133,13 @@ impl Server {
 ╔══════════════════════════════════════════════════════════╗
 ║       🚀 PostgrustSQL Server is Ready!                  ║
 ║                                                          ║
-║  Listening on: {:<41} ║
+║  Listening on: {addr:<41} ║
 ╚══════════════════════════════════════════════════════════╝
-", addr);
+");
 
         loop {
             let (socket, addr) = listener.accept().await?;
-            println!("→ New connection from {}", addr);
+            println!("→ New connection from {addr}");
 
             let instance = Arc::clone(&self.instance);
             let storage = Arc::clone(&self.storage);
@@ -148,7 +148,7 @@ impl Server {
 
             tokio::spawn(async move {
                 if let Err(e) = Self::handle_client_auto(socket, instance, storage, tx_manager, database_storage).await {
-                    eprintln!("✗ Error handling client {}: {}", addr, e);
+                    eprintln!("✗ Error handling client {addr}: {e}");
                 }
             });
         }
@@ -207,8 +207,8 @@ impl Server {
             let startup = StartupMessage::read(&mut reader).await?;
 
             // v2.0.0: Standard PostgreSQL authentication flow
-            let user = startup.parameters.get("user").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
-            let database_name = startup.parameters.get("database").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
+            let user = startup.parameters.get("user").map_or_else(|| "postgres".to_string(), std::string::ToString::to_string);
+            let database_name = startup.parameters.get("database").map_or_else(|| "postgres".to_string(), std::string::ToString::to_string);
 
             // Request password from client
             Message::authentication_cleartext_password().send(&mut writer).await?;
@@ -226,7 +226,7 @@ impl Server {
             let inst = instance.lock().await;
             if inst.authenticate(&user, &password_msg.password) {
                 session.authenticate(user.clone(), database_name.clone());
-                println!("✓ PostgreSQL client authenticated: user={}, database={}", user, database_name);
+                println!("✓ PostgreSQL client authenticated: user={user}, database={database_name}");
             } else {
                 drop(inst);
                 Message::error_response("Authentication failed").send(&mut writer).await?;
@@ -269,8 +269,8 @@ impl Server {
             }
 
             // v2.0.0: Standard PostgreSQL authentication flow
-            let user = parameters.get("user").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
-            let database_name = parameters.get("database").map(|s| s.to_string()).unwrap_or_else(|| "postgres".to_string());
+            let user = parameters.get("user").map_or_else(|| "postgres".to_string(), std::string::ToString::to_string);
+            let database_name = parameters.get("database").map_or_else(|| "postgres".to_string(), std::string::ToString::to_string);
 
             // Request password from client
             Message::authentication_cleartext_password().send(&mut writer).await?;
@@ -288,14 +288,14 @@ impl Server {
             let inst = instance.lock().await;
             if inst.authenticate(&user, &password_msg.password) {
                 session.authenticate(user.clone(), database_name.clone());
-                println!("✓ PostgreSQL client authenticated: user={}, database={}", user, database_name);
+                println!("✓ PostgreSQL client authenticated: user={user}, database={database_name}");
             } else {
                 drop(inst);
                 Message::error_response("Authentication failed").send(&mut writer).await?;
                 return Ok(());
             }
         } else {
-            return Err(format!("Unknown protocol code: {}", code).into());
+            return Err(format!("Unknown protocol code: {code}").into());
         }
 
         // Send AuthenticationOk
@@ -324,13 +324,10 @@ impl Server {
             match msg_type {
                 frontend::QUERY => {
                     // Extract query string
-                    let query = match pg_protocol::extract_cstring(&data) {
-                        Some((q, _)) => q,
-                        None => {
-                            Message::error_response("Invalid query format").send(&mut writer).await?;
-                            Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
-                            continue;
-                        }
+                    let query = if let Some((q, _)) = pg_protocol::extract_cstring(&data) { q } else {
+                        Message::error_response("Invalid query format").send(&mut writer).await?;
+                        Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
+                        continue;
                     };
 
                     let query = query.trim();
@@ -341,7 +338,7 @@ impl Server {
                     }
 
                     // Execute query
-                    match parse_statement(&query) {
+                    match parse_statement(query) {
                         Ok(stmt) => {
                             let mut inst = instance.lock().await;
 
@@ -349,32 +346,32 @@ impl Server {
                                 // User management commands
                                 crate::parser::Statement::CreateUser { username, password, is_superuser } => {
                                     match inst.create_user(&username, &password, is_superuser) {
-                                        Ok(_) => {
+                                        Ok(()) => {
                                             let mut storage_guard = storage.lock().await;
                                             if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                             } else {
                                                 Message::command_complete("CREATE USER").send(&mut writer).await?;
                                             }
                                         }
                                         Err(e) => {
-                                            Message::error_response(&format!("{}", e)).send(&mut writer).await?;
+                                            Message::error_response(&format!("{e}")).send(&mut writer).await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
                                 }
                                 crate::parser::Statement::DropUser { username } => {
                                     match inst.drop_user(&username) {
-                                        Ok(_) => {
+                                        Ok(()) => {
                                             let mut storage_guard = storage.lock().await;
                                             if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                             } else {
                                                 Message::command_complete("DROP USER").send(&mut writer).await?;
                                             }
                                         }
                                         Err(e) => {
-                                            Message::error_response(&format!("{}", e)).send(&mut writer).await?;
+                                            Message::error_response(&format!("{e}")).send(&mut writer).await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
@@ -385,13 +382,13 @@ impl Server {
                                             user.set_password(&password);
                                             let mut storage_guard = storage.lock().await;
                                             if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                             } else {
                                                 Message::command_complete("ALTER USER").send(&mut writer).await?;
                                             }
                                         }
                                         None => {
-                                            Message::error_response(&format!("User '{}' not found", username)).send(&mut writer).await?;
+                                            Message::error_response(&format!("User '{username}' not found")).send(&mut writer).await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
@@ -400,32 +397,32 @@ impl Server {
                                 crate::parser::Statement::CreateDatabase { name, owner } => {
                                     let owner = owner.unwrap_or_else(|| session.username.clone());
                                     match inst.create_database(&name, &owner) {
-                                        Ok(_) => {
+                                        Ok(()) => {
                                             let mut storage_guard = storage.lock().await;
                                             if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                             } else {
                                                 Message::command_complete("CREATE DATABASE").send(&mut writer).await?;
                                             }
                                         }
                                         Err(e) => {
-                                            Message::error_response(&format!("{}", e)).send(&mut writer).await?;
+                                            Message::error_response(&format!("{e}")).send(&mut writer).await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
                                 }
                                 crate::parser::Statement::DropDatabase { name } => {
                                     match inst.drop_database(&name) {
-                                        Ok(_) => {
+                                        Ok(()) => {
                                             let mut storage_guard = storage.lock().await;
                                             if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                             } else {
                                                 Message::command_complete("DROP DATABASE").send(&mut writer).await?;
                                             }
                                         }
                                         Err(e) => {
-                                            Message::error_response(&format!("{}", e)).send(&mut writer).await?;
+                                            Message::error_response(&format!("{e}")).send(&mut writer).await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
@@ -438,13 +435,13 @@ impl Server {
                                             meta.grant(&to_user, priv_type);
                                             let mut storage_guard = storage.lock().await;
                                             if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                             } else {
                                                 Message::command_complete("GRANT").send(&mut writer).await?;
                                             }
                                         }
                                         None => {
-                                            Message::error_response(&format!("Database '{}' not found", on_database)).send(&mut writer).await?;
+                                            Message::error_response(&format!("Database '{on_database}' not found")).send(&mut writer).await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
@@ -456,13 +453,13 @@ impl Server {
                                             meta.revoke(&from_user, &priv_type);
                                             let mut storage_guard = storage.lock().await;
                                             if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                             } else {
                                                 Message::command_complete("REVOKE").send(&mut writer).await?;
                                             }
                                         }
                                         None => {
-                                            Message::error_response(&format!("Database '{}' not found", on_database)).send(&mut writer).await?;
+                                            Message::error_response(&format!("Database '{on_database}' not found")).send(&mut writer).await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
@@ -506,13 +503,10 @@ impl Server {
                                 // Regular table operations need database access
                                 other_stmt => {
                                     // Получаем текущую БД из сессии
-                                    let db = match inst.get_database_mut(&session.database_name) {
-                                        Some(db) => db,
-                                        None => {
-                                            Message::error_response(&format!("Database '{}' not found", session.database_name)).send(&mut writer).await?;
-                                            Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
-                                            continue;
-                                        }
+                                    let db = if let Some(db) = inst.get_database_mut(&session.database_name) { db } else {
+                                        Message::error_response(&format!("Database '{}' not found", session.database_name)).send(&mut writer).await?;
+                                        Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
+                                        continue;
                                     };
 
                                     match other_stmt {
@@ -527,34 +521,34 @@ impl Server {
                                             Message::ready_for_query(transaction_status::IN_TRANSACTION).send(&mut writer).await?;
                                         }
                                         crate::parser::Statement::Commit => {
-                                            if !transaction.is_active() {
-                                                Message::error_response("No active transaction").send(&mut writer).await?;
-                                            } else {
+                                            if transaction.is_active() {
                                                 transaction.commit();
                                                 let mut storage_guard = storage.lock().await;
                                                 if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                    Message::error_response(&format!("Failed to persist: {}", e)).send(&mut writer).await?;
+                                                    Message::error_response(&format!("Failed to persist: {e}")).send(&mut writer).await?;
                                                 } else {
                                                     Message::command_complete("COMMIT").send(&mut writer).await?;
                                                 }
+                                            } else {
+                                                Message::error_response("No active transaction").send(&mut writer).await?;
                                             }
                                             Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
                                         }
                                         crate::parser::Statement::Rollback => {
-                                            if !transaction.is_active() {
-                                                Message::error_response("No active transaction").send(&mut writer).await?;
-                                            } else {
+                                            if transaction.is_active() {
                                                 transaction.rollback(db);
                                                 Message::command_complete("ROLLBACK").send(&mut writer).await?;
+                                            } else {
+                                                Message::error_response("No active transaction").send(&mut writer).await?;
                                             }
                                             Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
                                         }
                                         _ => {
                                             let mut storage_guard = storage.lock().await;
-                                            let storage_option = if !transaction.is_active() {
-                                                Some(&mut *storage_guard)
-                                            } else {
+                                            let storage_option = if transaction.is_active() {
                                                 None
+                                            } else {
+                                                Some(&mut *storage_guard)
                                             };
 
                                             // v2.0.0: database_storage is now required
@@ -562,14 +556,12 @@ impl Server {
                                                 .expect("v2.0.0: database_storage is required");
                                             let mut db_storage_guard = db_storage.lock().await;
 
-                                            match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, &mut *db_storage_guard) {
+                                            match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, &mut db_storage_guard) {
                                                 Ok(result) => {
-                                                    if !transaction.is_active() {
-                                                        if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                            Message::error_response(&format!("Checkpoint failed: {}", e)).send(&mut writer).await?;
-                                                        } else {
-                                                            Self::send_postgres_result(result, &mut writer).await?;
-                                                        }
+                                                    if transaction.is_active() {
+                                                        Self::send_postgres_result(result, &mut writer).await?;
+                                                    } else if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                                        Message::error_response(&format!("Checkpoint failed: {e}")).send(&mut writer).await?;
                                                     } else {
                                                         Self::send_postgres_result(result, &mut writer).await?;
                                                     }
@@ -582,7 +574,7 @@ impl Server {
                                                     Message::ready_for_query(status).send(&mut writer).await?;
                                                 }
                                                 Err(e) => {
-                                                    Message::error_response(&format!("{}", e)).send(&mut writer).await?;
+                                                    Message::error_response(&format!("{e}")).send(&mut writer).await?;
                                                     let status = if transaction.is_active() {
                                                         transaction_status::IN_TRANSACTION
                                                     } else {
@@ -597,7 +589,7 @@ impl Server {
                             }
                         }
                         Err(e) => {
-                            Message::error_response(&format!("Parse error: {}", e)).send(&mut writer).await?;
+                            Message::error_response(&format!("Parse error: {e}")).send(&mut writer).await?;
                             let status = if transaction.is_active() {
                                 transaction_status::IN_TRANSACTION
                             } else {
@@ -611,7 +603,7 @@ impl Server {
                     break;
                 }
                 _ => {
-                    Message::error_response(&format!("Unknown message type: {}", msg_type)).send(&mut writer).await?;
+                    Message::error_response(&format!("Unknown message type: {msg_type}")).send(&mut writer).await?;
                     Message::ready_for_query(transaction_status::IDLE).send(&mut writer).await?;
                 }
             }
@@ -696,9 +688,7 @@ impl Server {
                     let mut inst = instance.lock().await;
 
                     // Проверяем, существует ли БД
-                    if !inst.databases.contains_key(&session.database_name) {
-                        format!("Error: Database '{}' not found\n", session.database_name)
-                    } else {
+                    if inst.databases.contains_key(&session.database_name) {
                         // Получаем мутабельную ссылку на БД
                         let db = inst.get_database_mut(&session.database_name).unwrap();
 
@@ -709,29 +699,29 @@ impl Server {
                                 } else {
                                     let tx_id = tx_manager.begin_transaction();
                                     transaction.begin(tx_id, db);
-                                    format!("Transaction started (ID: {})\n", tx_id)
+                                    format!("Transaction started (ID: {tx_id})\n")
                                 }
                             }
                             crate::parser::Statement::Commit => {
-                                if !transaction.is_active() {
-                                    "Error: No active transaction\n".to_string()
-                                } else {
+                                if transaction.is_active() {
                                     transaction.commit();
                                     // Save server instance after commit
                                     let mut storage_guard = storage.lock().await;
                                     if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                        format!("Warning: Failed to persist changes: {}\n", e)
+                                        format!("Warning: Failed to persist changes: {e}\n")
                                     } else {
                                         "Transaction committed\n".to_string()
                                     }
+                                } else {
+                                    "Error: No active transaction\n".to_string()
                                 }
                             }
                             crate::parser::Statement::Rollback => {
-                                if !transaction.is_active() {
-                                    "Error: No active transaction\n".to_string()
-                                } else {
+                                if transaction.is_active() {
                                     transaction.rollback(db);
                                     "Transaction rolled back\n".to_string()
+                                } else {
+                                    "Error: No active transaction\n".to_string()
                                 }
                             }
                             other_stmt => {
@@ -739,10 +729,10 @@ impl Server {
                                 let mut storage_guard = storage.lock().await;
 
                                 // Execute with WAL logging (only if not in transaction)
-                                let storage_option = if !transaction.is_active() {
-                                    Some(&mut *storage_guard)
-                                } else {
+                                let storage_option = if transaction.is_active() {
                                     None
+                                } else {
+                                    Some(&mut *storage_guard)
                                 };
 
                                 // v2.0.0: database_storage is now required
@@ -750,26 +740,26 @@ impl Server {
                                     .expect("v2.0.0: database_storage is required");
                                 let mut db_storage_guard = db_storage.lock().await;
 
-                                match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, &mut *db_storage_guard) {
+                                match QueryExecutor::execute(db, other_stmt, storage_option, &tx_manager, &mut db_storage_guard) {
                                     Ok(result) => {
                                         // Checkpoint if needed (only if not in transaction)
-                                        if !transaction.is_active() {
-                                            if let Err(e) = storage_guard.save_server_instance(&inst) {
-                                                format!("Warning: Failed to checkpoint: {}\n", e)
-                                            } else {
-                                                Self::format_result(result)
-                                            }
+                                        if transaction.is_active() {
+                                            Self::format_result(result)
+                                        } else if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                            format!("Warning: Failed to checkpoint: {e}\n")
                                         } else {
                                             Self::format_result(result)
                                         }
                                     }
-                                    Err(e) => format!("Error: {}\n", e),
+                                    Err(e) => format!("Error: {e}\n"),
                                 }
                             }
                         }
+                    } else {
+                        format!("Error: Database '{}' not found\n", session.database_name)
                     }
                 }
-                Err(e) => format!("Parse error: {}\n", e),
+                Err(e) => format!("Parse error: {e}\n"),
             };
 
             writer.write_all(response.as_bytes()).await?;
@@ -782,7 +772,7 @@ impl Server {
 
     fn format_result(result: QueryResult) -> String {
         match result {
-            QueryResult::Success(msg) => format!("{}\n", msg),
+            QueryResult::Success(msg) => format!("{msg}\n"),
             QueryResult::Rows(rows, columns) => {
                 if rows.is_empty() {
                     return "(0 rows)\n".to_string();
@@ -792,11 +782,11 @@ impl Server {
                 table.load_preset(UTF8_FULL);
 
                 // Add header
-                table.set_header(columns.iter().map(|c| Cell::new(c)));
+                table.set_header(columns.iter().map(Cell::new));
 
                 // Add rows
                 for row in rows {
-                    table.add_row(row.iter().map(|c| Cell::new(c)));
+                    table.add_row(row.iter().map(Cell::new));
                 }
 
                 format!("{}\n({} rows)\n", table, table.row_iter().count() - 1)
@@ -804,7 +794,7 @@ impl Server {
         }
     }
 
-    fn convert_privilege(priv_type: &crate::parser::PrivilegeType) -> crate::types::Privilege {
+    const fn convert_privilege(priv_type: &crate::parser::PrivilegeType) -> crate::types::Privilege {
         match priv_type {
             crate::parser::PrivilegeType::Connect => crate::types::Privilege::Connect,
             crate::parser::PrivilegeType::Create => crate::types::Privilege::Create,

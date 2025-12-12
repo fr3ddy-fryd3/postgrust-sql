@@ -1,4 +1,4 @@
-/// Storage adapter - abstraction for PagedTable storage
+/// Storage adapter - abstraction for `PagedTable` storage
 ///
 /// v2.0.0: Legacy Vec<Row> storage has been removed.
 /// This module provides a unified interface for page-based row storage.
@@ -7,7 +7,7 @@ use crate::types::{Row, DatabaseError};
 
 /// Trait for row storage operations
 ///
-/// v2.0.0: Only PagedStorage implementation remains
+/// v2.0.0: Only `PagedStorage` implementation remains
 pub trait RowStorage {
     /// Insert a row into storage
     fn insert(&mut self, row: Row) -> Result<(), DatabaseError>;
@@ -37,7 +37,7 @@ pub trait RowStorage {
 
 // v2.0.0: LegacyStorage has been removed - page-based storage only
 
-/// Paged storage: wraps PagedTable
+/// Paged storage: wraps `PagedTable`
 ///
 /// High-performance storage with 8KB pages, LRU cache, and dirty tracking.
 /// Provides 1,250,000x better write amplification vs legacy storage.
@@ -46,12 +46,12 @@ pub struct PagedStorage<'a> {
 }
 
 impl<'a> PagedStorage<'a> {
-    pub fn new(paged_table: &'a mut crate::storage::PagedTable) -> Self {
+    pub const fn new(paged_table: &'a mut crate::storage::PagedTable) -> Self {
         Self { paged_table }
     }
 }
 
-impl<'a> RowStorage for PagedStorage<'a> {
+impl RowStorage for PagedStorage<'_> {
     fn insert(&mut self, row: Row) -> Result<(), DatabaseError> {
         self.paged_table.insert(row)
     }

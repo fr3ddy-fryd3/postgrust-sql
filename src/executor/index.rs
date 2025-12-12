@@ -24,7 +24,7 @@ impl IndexExecutor {
         // Check if index already exists
         if db.indexes.contains_key(&name) {
             return Err(DatabaseError::ParseError(
-                format!("Index '{}' already exists", name)
+                format!("Index '{name}' already exists")
             ));
         }
 
@@ -118,11 +118,11 @@ impl IndexExecutor {
     ) -> Result<QueryResult, DatabaseError> {
         if db.indexes.remove(&name).is_none() {
             return Err(DatabaseError::ParseError(
-                format!("Index '{}' does not exist", name)
+                format!("Index '{name}' does not exist")
             ));
         }
 
-        Ok(QueryResult::Success(format!("Index '{}' dropped", name)))
+        Ok(QueryResult::Success(format!("Index '{name}' dropped")))
     }
 }
 

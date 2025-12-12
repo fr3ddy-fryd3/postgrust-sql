@@ -65,7 +65,7 @@ impl StorageEngine {
         Ok(None)
     }
 
-    /// Загружает ServerInstance из snapshot + применяет WAL
+    /// Загружает `ServerInstance` из snapshot + применяет WAL
     pub fn load_server_instance(&self) -> Result<ServerInstance, DatabaseError> {
         // Загружаем последний snapshot
         let mut instance = self.load_snapshot()?.unwrap_or_else(ServerInstance::new);
@@ -95,7 +95,7 @@ impl StorageEngine {
         }
 
         // Fallback: проверяем legacy формат {name}.db
-        let db_path = self.data_dir.join(format!("{}.db", name));
+        let db_path = self.data_dir.join(format!("{name}.db"));
         if db_path.exists() {
             let data = fs::read(&db_path)?;
             let mut db: Database = bincode::deserialize(&data)
@@ -122,11 +122,12 @@ impl StorageEngine {
     }
 
     /// Проверяет нужен ли checkpoint
-    pub fn should_checkpoint(&self) -> bool {
+    #[must_use] 
+    pub const fn should_checkpoint(&self) -> bool {
         self.operations_since_snapshot >= self.snapshot_threshold
     }
 
-    /// Сохраняет ServerInstance (создаёт checkpoint только при необходимости)
+    /// Сохраняет `ServerInstance` (создаёт checkpoint только при необходимости)
     pub fn save_server_instance(&mut self, instance: &ServerInstance) -> Result<(), DatabaseError> {
         // Делаем checkpoint только если достигли порога операций
         if self.should_checkpoint() {
@@ -151,7 +152,7 @@ impl StorageEngine {
         Ok(())
     }
 
-    /// Создает checkpoint для ServerInstance
+    /// Создает checkpoint для `ServerInstance`
     pub fn create_checkpoint_instance(&mut self, instance: &ServerInstance) -> Result<(), DatabaseError> {
         // Сохраняем snapshot
         self.save_snapshot(instance)?;
@@ -283,13 +284,13 @@ impl StorageEngine {
     #[allow(dead_code)]
     pub fn delete_database(&self, name: &str) -> Result<(), DatabaseError> {
         // Удаляем binary формат
-        let db_path = self.data_dir.join(format!("{}.db", name));
+        let db_path = self.data_dir.join(format!("{name}.db"));
         if db_path.exists() {
             fs::remove_file(db_path)?;
         }
 
         // Удаляем старый JSON формат если есть
-        let json_path = self.data_dir.join(format!("{}.json", name));
+        let json_path = self.data_dir.join(format!("{name}.json"));
         if json_path.exists() {
             fs::remove_file(json_path)?;
         }
@@ -308,13 +309,11 @@ impl StorageEngine {
             if path.is_file() {
                 let ext = path.extension().and_then(|s| s.to_str());
                 // Ищем и .db (новый формат) и .json (старый формат)
-                if ext == Some("db") || ext == Some("json") {
-                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                        if seen.insert(name.to_string()) {
+                if (ext == Some("db") || ext == Some("json"))
+                    && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+                        && seen.insert(name.to_string()) {
                             databases.push(name.to_string());
                         }
-                    }
-                }
             }
         }
         Ok(databases)

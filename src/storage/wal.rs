@@ -72,6 +72,7 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
+    #[must_use] 
     pub fn new(sequence: u64, operation: Operation) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -130,15 +131,14 @@ impl WalManager {
             let entry = entry?;
             let path = entry.path();
 
-            if path.extension().and_then(|s| s.to_str()) == Some("wal") {
-                if let Ok(entries) = Self::read_wal_file(&path) {
+            if path.extension().and_then(|s| s.to_str()) == Some("wal")
+                && let Ok(entries) = Self::read_wal_file(&path) {
                     for log_entry in entries {
                         if log_entry.sequence > max_sequence {
                             max_sequence = log_entry.sequence;
                         }
                     }
                 }
-            }
         }
 
         self.current_sequence = max_sequence;
@@ -157,7 +157,7 @@ impl WalManager {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let wal_name = format!("{:016x}.wal", timestamp);
+        let wal_name = format!("{timestamp:016x}.wal");
         let wal_path = self.wal_dir.join(&wal_name);
 
         let file = OpenOptions::new()
@@ -208,7 +208,7 @@ impl WalManager {
             // Читаем длину записи (4 байта)
             let mut len_bytes = [0u8; 4];
             match file.read_exact(&mut len_bytes) {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     // Конец файла - это нормально
                     break;
@@ -226,7 +226,7 @@ impl WalManager {
             match bincode::deserialize::<LogEntry>(&data) {
                 Ok(entry) => entries.push(entry),
                 Err(e) => {
-                    eprintln!("Warning: failed to parse WAL entry: {}", e);
+                    eprintln!("Warning: failed to parse WAL entry: {e}");
                     // Продолжаем, игнорируя поврежденные записи
                 }
             }
@@ -286,21 +286,19 @@ impl WalManager {
                 old_row_index,
                 new_row,
             } => {
-                if let Some(table) = db.get_table_mut(table_name) {
-                    if *old_row_index < table.rows.len() {
+                if let Some(table) = db.get_table_mut(table_name)
+                    && *old_row_index < table.rows.len() {
                         table.rows[*old_row_index] = new_row.clone();
                     }
-                }
             }
             Operation::Delete {
                 table_name,
                 row_index,
             } => {
-                if let Some(table) = db.get_table_mut(table_name) {
-                    if *row_index < table.rows.len() {
+                if let Some(table) = db.get_table_mut(table_name)
+                    && *row_index < table.rows.len() {
                         table.rows.remove(*row_index);
                     }
-                }
             }
             Operation::Checkpoint { .. } => {
                 // Checkpoint marker - ничего не делаем
@@ -315,21 +313,19 @@ impl WalManager {
                 }
             }
             Operation::AlterTableDropColumn { table_name, column_name } => {
-                if let Some(table) = db.get_table_mut(table_name) {
-                    if let Some(col_idx) = table.get_column_index(column_name) {
+                if let Some(table) = db.get_table_mut(table_name)
+                    && let Some(col_idx) = table.get_column_index(column_name) {
                         table.columns.remove(col_idx);
                         for row in &mut table.rows {
                             row.values.remove(col_idx);
                         }
                     }
-                }
             }
             Operation::AlterTableRenameColumn { table_name, old_name, new_name } => {
-                if let Some(table) = db.get_table_mut(table_name) {
-                    if let Some(col_idx) = table.get_column_index(old_name) {
+                if let Some(table) = db.get_table_mut(table_name)
+                    && let Some(col_idx) = table.get_column_index(old_name) {
                         table.columns[col_idx].name = new_name.clone();
                     }
-                }
             }
             Operation::AlterTableRename { old_table_name, new_table_name } => {
                 if let Some(mut table) = db.tables.remove(old_table_name) {

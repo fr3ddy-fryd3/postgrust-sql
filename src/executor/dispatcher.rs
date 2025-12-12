@@ -1,7 +1,7 @@
 use crate::parser::Statement;
 use crate::storage::StorageEngine;
 use crate::transaction::TransactionManager;
-use crate::types::{Database, DatabaseError, Row, Table, Value};
+use crate::types::{Database, DatabaseError};
 
 // Import new modular executors
 use super::ddl::DdlExecutor;
@@ -20,7 +20,7 @@ pub enum QueryResult {
 impl QueryExecutor {
     /// Executes a query with automatic WAL logging and MVCC support
     ///
-    /// v2.0.0: database_storage is now required (page-based storage only)
+    /// v2.0.0: `database_storage` is now required (page-based storage only)
     pub fn execute(
         db: &mut Database,
         stmt: Statement,
@@ -128,13 +128,13 @@ impl QueryExecutor {
             }
             // Set operations (v1.10.0)
             Statement::Union { left, right, all } => {
-                QueriesExecutor::union(db, &*left, &*right, all, tx_manager, Some(database_storage))
+                QueriesExecutor::union(db, &left, &right, all, tx_manager, Some(database_storage))
             }
             Statement::Intersect { left, right } => {
-                QueriesExecutor::intersect(db, &*left, &*right, tx_manager, Some(database_storage))
+                QueriesExecutor::intersect(db, &left, &right, tx_manager, Some(database_storage))
             }
             Statement::Except { left, right } => {
-                QueriesExecutor::except(db, &*left, &*right, tx_manager, Some(database_storage))
+                QueriesExecutor::except(db, &left, &right, tx_manager, Some(database_storage))
             }
             Statement::CreateIndex { name, table, columns, unique, index_type } => {
                 super::index::IndexExecutor::create_index(db, name, table, columns, unique, index_type)
@@ -146,7 +146,7 @@ impl QueryExecutor {
                 super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, Some(database_storage))
             }
             Statement::Explain { statement } => {
-                let result = super::explain::ExplainExecutor::explain(db, &*statement)?;
+                let result = super::explain::ExplainExecutor::explain(db, &statement)?;
                 // Convert explain::QueryResult to legacy::QueryResult
                 match result {
                     super::explain::QueryResult::Success(msg) => Ok(QueryResult::Success(msg)),
@@ -156,22 +156,22 @@ impl QueryExecutor {
             // Views (v1.10.0)
             Statement::CreateView { name, query } => {
                 if db.views.contains_key(&name) {
-                    return Err(DatabaseError::ParseError(format!("View '{}' already exists", name)));
+                    return Err(DatabaseError::ParseError(format!("View '{name}' already exists")));
                 }
                 if db.tables.contains_key(&name) {
-                    return Err(DatabaseError::ParseError(format!("Table '{}' already exists with that name", name)));
+                    return Err(DatabaseError::ParseError(format!("Table '{name}' already exists with that name")));
                 }
                 // Validate query by parsing it
                 crate::parser::parse_statement(&query)
-                    .map_err(|e| DatabaseError::ParseError(e))?;
+                    .map_err(DatabaseError::ParseError)?;
                 db.views.insert(name.clone(), query);
-                Ok(QueryResult::Success(format!("View '{}' created", name)))
+                Ok(QueryResult::Success(format!("View '{name}' created")))
             }
             Statement::DropView { name } => {
                 if db.views.remove(&name).is_some() {
-                    Ok(QueryResult::Success(format!("View '{}' dropped", name)))
+                    Ok(QueryResult::Success(format!("View '{name}' dropped")))
                 } else {
-                    Err(DatabaseError::ParseError(format!("View '{}' does not exist", name)))
+                    Err(DatabaseError::ParseError(format!("View '{name}' does not exist")))
                 }
             }
             Statement::Begin | Statement::Commit | Statement::Rollback => {
@@ -207,7 +207,7 @@ impl QueryExecutor {
             // Type management
             Statement::CreateType { name, values } => {
                 db.create_enum(name.clone(), values)?;
-                Ok(QueryResult::Success(format!("Type '{}' created successfully", name)))
+                Ok(QueryResult::Success(format!("Type '{name}' created successfully")))
             }
         }
     }
@@ -219,7 +219,7 @@ mod tests {
     use super::*;
     use crate::parser::{SelectColumn, Statement};
     use crate::transaction::TransactionManager;
-    use crate::types::{Column, DataType, Database, Value};
+    use crate::types::{Column, DataType, Database, Row, Table, Value};
 
     fn create_test_table() -> Table {
         let columns = vec![

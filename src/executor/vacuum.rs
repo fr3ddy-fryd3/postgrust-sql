@@ -1,9 +1,9 @@
 /// VACUUM executor - removes dead tuples from tables
 ///
 /// Implements VACUUM command for MVCC cleanup:
-/// - Scans tables for dead tuples (xmax < oldest_active_tx)
+/// - Scans tables for dead tuples (xmax < `oldest_active_tx`)
 /// - Removes dead tuples from storage
-/// - Works with both Vec<Row> (legacy) and PagedTable storage
+/// - Works with both Vec<Row> (legacy) and `PagedTable` storage
 
 use crate::core::{Database, DatabaseError};
 use crate::transaction::TransactionManager;
@@ -21,7 +21,7 @@ impl VacuumExecutor {
     /// * `database_storage` - Optional page-based storage
     ///
     /// # Returns
-    /// QueryResult with number of tuples removed
+    /// `QueryResult` with number of tuples removed
     pub fn vacuum(
         db: &mut Database,
         table_name: Option<String>,
@@ -55,8 +55,7 @@ impl VacuumExecutor {
         }
 
         Ok(QueryResult::Success(format!(
-            "VACUUM complete. Removed {} dead tuples.",
-            total_removed
+            "VACUUM complete. Removed {total_removed} dead tuples."
         )))
     }
 
@@ -76,7 +75,7 @@ impl VacuumExecutor {
 
     /// Vacuum legacy Vec<Row> storage
     ///
-    /// Simple implementation: Vec::retain() to filter out dead tuples
+    /// Simple implementation: `Vec::retain()` to filter out dead tuples
     fn vacuum_legacy_table(
         db: &mut Database,
         table_name: &str,

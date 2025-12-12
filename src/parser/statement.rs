@@ -125,7 +125,7 @@ pub enum Statement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrivilegeType {
     Connect,
     Create,
@@ -136,7 +136,7 @@ pub enum PrivilegeType {
     All,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnDef {
     pub name: String,
     pub data_type: DataType,
@@ -146,7 +146,7 @@ pub struct ColumnDef {
     pub foreign_key: Option<crate::types::ForeignKey>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlterTableOperation {
     AddColumn(ColumnDef),
     DropColumn(String),
@@ -171,7 +171,7 @@ pub enum Condition {
     Or(Box<Condition>, Box<Condition>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SortOrder {
     Asc,
     Desc,
@@ -198,7 +198,7 @@ pub enum SelectColumn {
     Case(CaseExpression),         // CASE expression (v1.10.0)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AggregateFunction {
     Count(CountTarget),
     Sum(String),
@@ -207,20 +207,20 @@ pub enum AggregateFunction {
     Max(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CountTarget {
     All,           // COUNT(*)
     Column(String), // COUNT(column)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinType {
     Inner,
     Left,
     Right,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinClause {
     pub join_type: JoinType,
     pub table: String,

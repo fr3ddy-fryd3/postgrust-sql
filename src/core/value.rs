@@ -29,25 +29,28 @@ pub enum Value {
 
 impl Value {
     #[allow(dead_code)]
-    pub fn as_int(&self) -> Option<i64> {
+    #[must_use] 
+    pub const fn as_int(&self) -> Option<i64> {
         match self {
-            Value::Integer(i) => Some(*i),
+            Self::Integer(i) => Some(*i),
             _ => None,
         }
     }
 
     #[allow(dead_code)]
+    #[must_use] 
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Value::Text(s) => Some(s),
+            Self::Text(s) => Some(s),
             _ => None,
         }
     }
 
     #[allow(dead_code)]
-    pub fn as_bool(&self) -> Option<bool> {
+    #[must_use] 
+    pub const fn as_bool(&self) -> Option<bool> {
         match self {
-            Value::Boolean(b) => Some(*b),
+            Self::Boolean(b) => Some(*b),
             _ => None,
         }
     }
@@ -56,21 +59,21 @@ impl Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Null => write!(f, "NULL"),
-            Value::SmallInt(i) => write!(f, "{}", i),
-            Value::Integer(i) => write!(f, "{}", i),
-            Value::Real(r) => write!(f, "{}", r),
-            Value::Numeric(d) => write!(f, "{}", d),
-            Value::Text(s) => write!(f, "{}", s),
-            Value::Char(s) => write!(f, "{}", s),
-            Value::Boolean(b) => write!(f, "{}", b),
-            Value::Date(d) => write!(f, "{}", d.format("%Y-%m-%d")),
-            Value::Timestamp(t) => write!(f, "{}", t.format("%Y-%m-%d %H:%M:%S")),
-            Value::TimestampTz(t) => write!(f, "{}", t.format("%Y-%m-%d %H:%M:%S %Z")),
-            Value::Uuid(u) => write!(f, "{}", u),
-            Value::Json(j) => write!(f, "{}", j),
-            Value::Bytea(b) => write!(f, "\\x{}", hex::encode(b)),
-            Value::Enum(_, v) => write!(f, "{}", v),
+            Self::Null => write!(f, "NULL"),
+            Self::SmallInt(i) => write!(f, "{i}"),
+            Self::Integer(i) => write!(f, "{i}"),
+            Self::Real(r) => write!(f, "{r}"),
+            Self::Numeric(d) => write!(f, "{d}"),
+            Self::Text(s) => write!(f, "{s}"),
+            Self::Char(s) => write!(f, "{s}"),
+            Self::Boolean(b) => write!(f, "{b}"),
+            Self::Date(d) => write!(f, "{}", d.format("%Y-%m-%d")),
+            Self::Timestamp(t) => write!(f, "{}", t.format("%Y-%m-%d %H:%M:%S")),
+            Self::TimestampTz(t) => write!(f, "{}", t.format("%Y-%m-%d %H:%M:%S %Z")),
+            Self::Uuid(u) => write!(f, "{u}"),
+            Self::Json(j) => write!(f, "{j}"),
+            Self::Bytea(b) => write!(f, "\\x{}", hex::encode(b)),
+            Self::Enum(_, v) => write!(f, "{v}"),
         }
     }
 }

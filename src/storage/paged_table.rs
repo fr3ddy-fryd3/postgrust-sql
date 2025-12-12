@@ -3,7 +3,7 @@ use crate::types::{DatabaseError, Row};
 use super::page_manager::PageManager;
 use super::page::PageId;
 
-/// PagedTable - table storage using page-based architecture
+/// `PagedTable` - table storage using page-based architecture
 pub struct PagedTable {
     /// Table ID (unique identifier)
     pub table_id: u32,
@@ -17,7 +17,7 @@ pub struct PagedTable {
 
 impl PagedTable {
     /// Create a new paged table
-    pub fn new(table_id: u32, page_manager: Arc<Mutex<PageManager>>) -> Self {
+    pub const fn new(table_id: u32, page_manager: Arc<Mutex<PageManager>>) -> Self {
         Self {
             table_id,
             page_manager,
@@ -93,7 +93,8 @@ impl PagedTable {
     }
 
     /// Get row count
-    pub fn row_count(&self) -> usize {
+    #[must_use] 
+    pub const fn row_count(&self) -> usize {
         self.row_count
     }
 
@@ -113,14 +114,13 @@ impl PagedTable {
             let count = guard.get_mut(|page| {
                 let mut local_count = 0;
                 for slot_idx in 0..page.slots.len() {
-                    if let Ok(mut row) = page.get_row(slot_idx as u16) {
-                        if predicate(&row) {
+                    if let Ok(mut row) = page.get_row(slot_idx as u16)
+                        && predicate(&row) {
                             // MVCC: mark row as deleted instead of physical removal
                             row.mark_deleted(tx_id);
                             page.update_row(slot_idx as u16, &row)?;
                             local_count += 1;
                         }
-                    }
                 }
                 Ok(local_count)
             })?;
@@ -150,8 +150,8 @@ impl PagedTable {
 
             guard.get_mut(|page| {
                 for slot_idx in 0..page.slots.len() {
-                    if let Ok(mut row) = page.get_row(slot_idx as u16) {
-                        if predicate(&row) {
+                    if let Ok(mut row) = page.get_row(slot_idx as u16)
+                        && predicate(&row) {
                             // Mark old version as deleted
                             row.mark_deleted(tx_id);
                             page.update_row(slot_idx as u16, &row)?;
@@ -163,7 +163,6 @@ impl PagedTable {
                             new_rows.push(new_row);
                             updated_count += 1;
                         }
-                    }
                 }
                 Ok(())
             })?;
@@ -186,7 +185,8 @@ impl PagedTable {
     }
 
     /// Get statistics
-    pub fn stats(&self) -> PagedTableStats {
+    #[must_use] 
+    pub const fn stats(&self) -> PagedTableStats {
         PagedTableStats {
             table_id: self.table_id,
             page_count: self.page_count,

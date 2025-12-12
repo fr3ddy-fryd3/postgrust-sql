@@ -57,6 +57,7 @@ pub struct BufferPool {
 
 impl BufferPool {
     /// Create new buffer pool with given capacity (number of pages)
+    #[must_use] 
     pub fn new(capacity: usize) -> Self {
         Self {
             pages: HashMap::new(),
@@ -141,6 +142,7 @@ impl BufferPool {
     }
 
     /// Get all dirty pages
+    #[must_use] 
     pub fn get_dirty_pages(&self) -> Vec<PageId> {
         self.dirty_pages.iter().copied().collect()
     }
@@ -156,16 +158,19 @@ impl BufferPool {
     }
 
     /// Get number of pages in buffer pool
+    #[must_use] 
     pub fn size(&self) -> usize {
         self.pages.len()
     }
 
     /// Get number of dirty pages
+    #[must_use] 
     pub fn dirty_count(&self) -> usize {
         self.dirty_pages.len()
     }
 
     /// Get cache hit rate
+    #[must_use] 
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
         if total == 0 {

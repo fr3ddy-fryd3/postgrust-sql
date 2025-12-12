@@ -5,7 +5,7 @@
 ///
 /// Structure:
 /// - legacy: Original monolithic executor (temporary, will be split)
-/// - storage_adapter: Abstraction over Vec<Row> and PagedTable ✅
+/// - `storage_adapter`: Abstraction over Vec<Row> and `PagedTable` ✅
 /// - conditions: WHERE clause evaluation ✅
 /// - dml: INSERT/UPDATE/DELETE operations ✅
 /// - ddl: CREATE/DROP/ALTER TABLE operations ✅

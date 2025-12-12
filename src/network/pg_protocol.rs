@@ -2,7 +2,7 @@ use bytes::{BufMut, BytesMut};
 use std::collections::HashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// PostgreSQL protocol version 3.0
+/// `PostgreSQL` protocol version 3.0
 pub const PROTOCOL_VERSION: i32 = 196608; // (3 << 16) | 0
 
 /// SSL request code
@@ -33,7 +33,7 @@ pub mod transaction_status {
     pub const FAILED: u8 = b'E'; // In failed transaction
 }
 
-/// PostgreSQL data type OIDs (simplified)
+/// `PostgreSQL` data type OIDs (simplified)
 pub mod oid {
     pub const INT4: i32 = 23;
     pub const TEXT: i32 = 25;
@@ -51,13 +51,13 @@ pub struct StartupMessage {
     pub parameters: HashMap<String, String>,
 }
 
-/// PasswordMessage from client (v2.0.0)
+/// `PasswordMessage` from client (v2.0.0)
 pub struct PasswordMessage {
     pub password: String,
 }
 
 impl PasswordMessage {
-    /// Read PasswordMessage from client
+    /// Read `PasswordMessage` from client
     /// Format: 'p' + Int32(length) + password (null-terminated string)
     pub async fn read<R: AsyncReadExt + Unpin>(reader: &mut R) -> std::io::Result<Self> {
         // Message type already read by caller
@@ -70,12 +70,12 @@ impl PasswordMessage {
         reader.read_exact(&mut password_buf).await?;
 
         // Remove null terminator if present
-        if let Some(&0) = password_buf.last() {
+        if password_buf.last() == Some(&0) {
             password_buf.pop();
         }
 
         let password = String::from_utf8_lossy(&password_buf).to_string();
-        Ok(PasswordMessage { password })
+        Ok(Self { password })
     }
 }
 
@@ -90,7 +90,7 @@ impl StartupMessage {
         if protocol_version != PROTOCOL_VERSION {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Unsupported protocol version: {}", protocol_version),
+                format!("Unsupported protocol version: {protocol_version}"),
             ));
         }
 
@@ -131,7 +131,7 @@ impl StartupMessage {
             }
         }
 
-        Ok(StartupMessage { parameters })
+        Ok(Self { parameters })
     }
 }
 
@@ -139,7 +139,14 @@ pub struct Message {
     buf: BytesMut,
 }
 
+impl Default for Message {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Message {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             buf: BytesMut::new(),
@@ -161,7 +168,8 @@ impl Message {
         self.buf[len_pos..len_pos + 4].copy_from_slice(&len_bytes);
     }
 
-    /// AuthenticationOk message
+    /// `AuthenticationOk` message
+    #[must_use] 
     pub fn authentication_ok() -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::AUTHENTICATION);
@@ -170,8 +178,9 @@ impl Message {
         msg
     }
 
-    /// AuthenticationCleartextPassword message (v2.0.0)
+    /// `AuthenticationCleartextPassword` message (v2.0.0)
     /// Requests client to send cleartext password
+    #[must_use] 
     pub fn authentication_cleartext_password() -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::AUTHENTICATION);
@@ -180,7 +189,8 @@ impl Message {
         msg
     }
 
-    /// ParameterStatus message
+    /// `ParameterStatus` message
+    #[must_use] 
     pub fn parameter_status(name: &str, value: &str) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::PARAMETER_STATUS);
@@ -190,7 +200,8 @@ impl Message {
         msg
     }
 
-    /// ReadyForQuery message
+    /// `ReadyForQuery` message
+    #[must_use] 
     pub fn ready_for_query(status: u8) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::READY_FOR_QUERY);
@@ -199,7 +210,8 @@ impl Message {
         msg
     }
 
-    /// ErrorResponse message
+    /// `ErrorResponse` message
+    #[must_use] 
     pub fn error_response(message: &str) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::ERROR_RESPONSE);
@@ -223,7 +235,8 @@ impl Message {
         msg
     }
 
-    /// RowDescription message
+    /// `RowDescription` message
+    #[must_use] 
     pub fn row_description(columns: &[String]) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::ROW_DESCRIPTION);
@@ -244,7 +257,8 @@ impl Message {
         msg
     }
 
-    /// DataRow message
+    /// `DataRow` message
+    #[must_use] 
     pub fn data_row(values: &[String]) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::DATA_ROW);
@@ -261,7 +275,8 @@ impl Message {
         msg
     }
 
-    /// CommandComplete message
+    /// `CommandComplete` message
+    #[must_use] 
     pub fn command_complete(tag: &str) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::COMMAND_COMPLETE);
@@ -307,6 +322,7 @@ pub async fn read_frontend_message<R: AsyncReadExt + Unpin>(
 }
 
 /// Extract null-terminated string from byte slice
+#[must_use] 
 pub fn extract_cstring(data: &[u8]) -> Option<(String, usize)> {
     let mut end = 0;
     while end < data.len() && data[end] != 0 {

@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use super::page::{Page, PageId};
 use super::buffer_pool::BufferPool;
-use crate::types::{DatabaseError, Row};
+use crate::types::DatabaseError;
 
-/// PageManager - manages disk I/O for pages
+/// `PageManager` - manages disk I/O for pages
 pub struct PageManager {
     /// Root data directory
     data_dir: PathBuf,
@@ -15,7 +15,7 @@ pub struct PageManager {
 }
 
 impl PageManager {
-    /// Create new PageManager
+    /// Create new `PageManager`
     pub fn new<P: AsRef<Path>>(data_dir: P, buffer_pool_size: usize) -> Result<Self, DatabaseError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
@@ -83,13 +83,12 @@ impl PageManager {
         let mut pool = self.buffer_pool.lock().unwrap();
         if let Some(evicted_page_id) = pool.insert_page(page.clone())? {
             // Need to write evicted page if it's dirty
-            if pool.get_dirty_pages().contains(&evicted_page_id) {
-                if let Some(evicted_page) = pool.remove_page(evicted_page_id) {
+            if pool.get_dirty_pages().contains(&evicted_page_id)
+                && let Some(evicted_page) = pool.remove_page(evicted_page_id) {
                     drop(pool);
                     self.write_page_to_disk(&evicted_page)?;
                     // Lock will be re-acquired on next iteration or function exit
                 }
-            }
         }
 
         Ok(page)
@@ -154,8 +153,9 @@ impl PageManager {
     }
 
     /// Get number of pages for a table
+    #[must_use] 
     pub fn get_page_count(&self, table_id: u32) -> usize {
-        let table_dir = self.data_dir.join(format!("table_{}", table_id));
+        let table_dir = self.data_dir.join(format!("table_{table_id}"));
 
         if !table_dir.exists() {
             return 0;
@@ -164,7 +164,7 @@ impl PageManager {
         fs::read_dir(&table_dir)
             .map(|entries| {
                 entries
-                    .filter_map(|e| e.ok())
+                    .filter_map(std::result::Result::ok)
                     .filter(|e| {
                         e.path()
                             .extension()
@@ -178,7 +178,7 @@ impl PageManager {
 
     /// Delete all pages for a table
     pub fn delete_table_pages(&self, table_id: u32) -> Result<(), DatabaseError> {
-        let table_dir = self.data_dir.join(format!("table_{}", table_id));
+        let table_dir = self.data_dir.join(format!("table_{table_id}"));
 
         if table_dir.exists() {
             fs::remove_dir_all(&table_dir)?;
@@ -196,6 +196,7 @@ impl PageManager {
     }
 
     /// Get buffer pool statistics
+    #[must_use] 
     pub fn get_stats(&self) -> BufferPoolStats {
         let pool = self.buffer_pool.lock().unwrap();
         BufferPoolStats {
@@ -208,6 +209,7 @@ impl PageManager {
     }
 
     /// Get reference to buffer pool (for advanced operations)
+    #[must_use] 
     pub fn buffer_pool(&self) -> Arc<Mutex<BufferPool>> {
         Arc::clone(&self.buffer_pool)
     }
@@ -219,7 +221,7 @@ pub struct PageMutGuard<'a> {
     page_manager: &'a PageManager,
 }
 
-impl<'a> PageMutGuard<'a> {
+impl PageMutGuard<'_> {
     /// Get mutable reference to the page
     pub fn get_mut<F, R>(&self, f: F) -> Result<R, DatabaseError>
     where
@@ -251,7 +253,7 @@ pub struct BufferPoolStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Value;
+    use crate::types::{Row, Value};
     use tempfile::TempDir;
 
     #[test]

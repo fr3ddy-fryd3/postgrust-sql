@@ -1,7 +1,7 @@
 /// DML (Data Manipulation Language) operations
 ///
-/// INSERT, UPDATE, DELETE using RowStorage abstraction.
-/// This allows seamless operation with both Vec<Row> and PagedTable.
+/// INSERT, UPDATE, DELETE using `RowStorage` abstraction.
+/// This allows seamless operation with both Vec<Row> and `PagedTable`.
 
 use crate::types::{Database, DatabaseError, Row, Value, Column, DataType};
 use crate::parser::Condition;
@@ -16,11 +16,11 @@ use std::collections::HashMap;
 pub struct DmlExecutor;
 
 impl DmlExecutor {
-    /// Execute INSERT statement using RowStorage abstraction
+    /// Execute INSERT statement using `RowStorage` abstraction
     ///
-    /// This version uses RowStorage trait, allowing it to work with either:
-    /// - LegacyStorage (Vec<Row>) - current default
-    /// - PagedStorage (PagedTable) - new high-performance backend
+    /// This version uses `RowStorage` trait, allowing it to work with either:
+    /// - `LegacyStorage` (Vec<Row>) - current default
+    /// - `PagedStorage` (`PagedTable`) - new high-performance backend
     ///
     /// Borrow-checker friendly: accepts table parts separately instead of &mut Database
     pub fn insert_with_storage<S: RowStorage>(
@@ -92,12 +92,11 @@ impl DmlExecutor {
 
         // Update sequences for SERIAL columns (using mutable reference)
         for (idx, col) in table_columns.iter().enumerate() {
-            if matches!(col.data_type, DataType::Serial | DataType::BigSerial) {
-                if let Value::Integer(val) = ordered_values[idx] {
+            if matches!(col.data_type, DataType::Serial | DataType::BigSerial)
+                && let Value::Integer(val) = ordered_values[idx] {
                     let current_seq = sequences_mut.get(&col.name).copied().unwrap_or(1);
                     sequences_mut.insert(col.name.clone(), current_seq.max(val + 1));
                 }
-            }
         }
 
         Ok(QueryResult::Success("1 row inserted".to_string()))
@@ -115,7 +114,7 @@ impl DmlExecutor {
                 let idx = table_columns
                     .iter()
                     .position(|c| &c.name == col_name)
-                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col_name)))?;
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
                 ordered_values[idx] = value.clone();
             }
             Ok(ordered_values)
@@ -131,12 +130,11 @@ impl DmlExecutor {
         values: &mut [Value],
     ) {
         for (idx, col) in columns.iter().enumerate() {
-            if matches!(col.data_type, crate::types::DataType::Serial | crate::types::DataType::BigSerial) {
-                if matches!(values[idx], Value::Null) {
+            if matches!(col.data_type, crate::types::DataType::Serial | crate::types::DataType::BigSerial)
+                && matches!(values[idx], Value::Null) {
                     let seq_value = sequences.get(&col.name).copied().unwrap_or(1);
                     values[idx] = Value::Integer(seq_value);
                 }
-            }
         }
     }
 
@@ -149,16 +147,14 @@ impl DmlExecutor {
             let value = &mut values[idx];
 
             // Validate VARCHAR length
-            if let crate::types::DataType::Varchar { max_length } = col.data_type {
-                if let Value::Text(s) = value {
-                    if s.len() > max_length {
+            if let crate::types::DataType::Varchar { max_length } = col.data_type
+                && let Value::Text(s) = value
+                    && s.len() > max_length {
                         return Err(DatabaseError::ParseError(format!(
                             "Value too long for column '{}': {} exceeds VARCHAR({})",
                             col.name, s.len(), max_length
                         )));
                     }
-                }
-            }
 
             // Validate and pad CHAR length
             if let crate::types::DataType::Char { length } = col.data_type {
@@ -170,7 +166,7 @@ impl DmlExecutor {
                                 col.name, s.len(), length
                             )));
                         }
-                        *value = Value::Char(format!("{:<width$}", s, width = length));
+                        *value = Value::Char(format!("{s:<length$}"));
                     }
                     _ => {}
                 }
@@ -182,8 +178,7 @@ impl DmlExecutor {
                     Value::Text(s) => {
                         if !values.contains(s) {
                             return Err(DatabaseError::ParseError(format!(
-                                "Invalid value '{}' for ENUM type '{}'. Expected one of: {:?}",
-                                s, name, values
+                                "Invalid value '{s}' for ENUM type '{name}'. Expected one of: {values:?}"
                             )));
                         }
                         *value = Value::Enum(name.clone(), s.clone());
@@ -191,8 +186,7 @@ impl DmlExecutor {
                     Value::Enum(_, val) => {
                         if !values.contains(val) {
                             return Err(DatabaseError::ParseError(format!(
-                                "Invalid value '{}' for ENUM type '{}'",
-                                val, name
+                                "Invalid value '{val}' for ENUM type '{name}'"
                             )));
                         }
                     }
@@ -203,9 +197,9 @@ impl DmlExecutor {
         Ok(())
     }
 
-    /// Validate foreign key constraints (using HashMap<String, Table>)
+    /// Validate foreign key constraints (using `HashMap`<String, Table>)
     ///
-    /// Borrow-checker friendly version that accepts all_tables instead of &Database
+    /// Borrow-checker friendly version that accepts `all_tables` instead of &Database
     fn validate_foreign_keys_with_tables(
         all_tables: &std::collections::HashMap<String, crate::types::Table>,
         columns: &[Column],
@@ -265,7 +259,7 @@ impl DmlExecutor {
         Self::validate_foreign_keys_with_tables(&db.tables, columns, values, tx_manager)
     }
 
-    /// Validate UNIQUE constraints using RowStorage
+    /// Validate UNIQUE constraints using `RowStorage`
     fn validate_unique_constraints<S: RowStorage>(
         columns: &[Column],
         values: &[Value],
@@ -309,7 +303,7 @@ impl DmlExecutor {
             if matches!(col.data_type, crate::types::DataType::Serial | crate::types::DataType::BigSerial) {
                 let val = match values[idx] {
                     Value::Integer(v) => v,
-                    Value::SmallInt(v) => v as i64,
+                    Value::SmallInt(v) => i64::from(v),
                     _ => continue,
                 };
                 let current_seq = table.sequences.get(&col.name).copied().unwrap_or(1);
@@ -319,7 +313,7 @@ impl DmlExecutor {
         }
     }
 
-    /// Execute UPDATE statement using RowStorage abstraction
+    /// Execute UPDATE statement using `RowStorage` abstraction
     ///
     /// Updates rows matching the filter condition.
     pub fn update_with_storage<S: RowStorage>(
@@ -339,7 +333,7 @@ impl DmlExecutor {
                 let idx = table_columns
                     .iter()
                     .position(|c| c.name == col_name)
-                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col_name)))?;
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
                 Ok((idx, value))
             })
             .collect::<Result<Vec<_>, DatabaseError>>()?;
@@ -437,10 +431,10 @@ impl DmlExecutor {
             // storage_engine.log_update(table_name, ...)?;
         }
 
-        Ok(QueryResult::Success(format!("{} row(s) updated", updated_count)))
+        Ok(QueryResult::Success(format!("{updated_count} row(s) updated")))
     }
 
-    /// Execute DELETE statement using RowStorage abstraction
+    /// Execute DELETE statement using `RowStorage` abstraction
     ///
     /// Deletes rows matching the filter condition.
     pub fn delete_with_storage<S: RowStorage>(
@@ -523,15 +517,15 @@ impl DmlExecutor {
             // storage_engine.log_delete(table_name, ...)?;
         }
 
-        Ok(QueryResult::Success(format!("{} row(s) deleted", deleted_count)))
+        Ok(QueryResult::Success(format!("{deleted_count} row(s) deleted")))
     }
 
-    /// Convenience wrapper that uses LegacyStorage (Vec<Row>)
+    /// Convenience wrapper that uses `LegacyStorage` (Vec<Row>)
     ///
     /// This maintains backward compatibility with existing code.
     ///
     /// Note: This function needs to be restructured to avoid borrow checker issues.
-    /// For now, users should call insert_with_storage directly.
+    /// For now, users should call `insert_with_storage` directly.
     #[allow(dead_code)]
     pub fn insert_legacy(
         _db: &mut Database,

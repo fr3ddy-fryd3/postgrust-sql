@@ -11,7 +11,8 @@ pub struct Row {
 }
 
 impl Row {
-    pub fn new(values: Vec<Value>) -> Self {
+    #[must_use] 
+    pub const fn new(values: Vec<Value>) -> Self {
         Self {
             values,
             xmin: 0, // Will be set by TransactionManager
@@ -19,7 +20,8 @@ impl Row {
         }
     }
 
-    pub fn new_with_xmin(values: Vec<Value>, xmin: u64) -> Self {
+    #[must_use] 
+    pub const fn new_with_xmin(values: Vec<Value>, xmin: u64) -> Self {
         Self {
             values,
             xmin,
@@ -28,12 +30,13 @@ impl Row {
     }
 
     /// Checks if this row is visible to a given transaction (Read Committed isolation)
+    #[must_use] 
     pub fn is_visible(&self, current_tx_id: u64) -> bool {
         // Row is visible if:
         // 1. It was created before or in current transaction (xmin <= current_tx_id)
         // 2. AND it hasn't been deleted (xmax is None) OR was deleted by a transaction
         //    that started after current transaction (xmax > current_tx_id)
-        self.xmin <= current_tx_id && self.xmax.map_or(true, |xmax| xmax > current_tx_id)
+        self.xmin <= current_tx_id && self.xmax.is_none_or(|xmax| xmax > current_tx_id)
     }
 
     /// Checks if this row is dead and can be removed by VACUUM
@@ -41,10 +44,11 @@ impl Row {
     /// A row is dead if:
     /// 1. It has been deleted/updated (xmax is set)
     /// 2. The deletion is committed and invisible to all active transactions
-    ///    (xmax <= oldest_active_tx)
+    ///    (xmax <= `oldest_active_tx`)
     ///
     /// This ensures we only vacuum tuples that no transaction can see.
-    pub fn is_dead(&self, oldest_active_tx: u64) -> bool {
+    #[must_use] 
+    pub const fn is_dead(&self, oldest_active_tx: u64) -> bool {
         match self.xmax {
             Some(xmax) => xmax <= oldest_active_tx,
             None => false, // Row is still alive
@@ -56,7 +60,7 @@ impl Row {
     /// Instead of physically removing the row, we mark it with the transaction ID
     /// that deleted it. This allows other transactions to still see the row if needed,
     /// and VACUUM will physically remove it later when safe.
-    pub fn mark_deleted(&mut self, tx_id: u64) {
+    pub const fn mark_deleted(&mut self, tx_id: u64) {
         self.xmax = Some(tx_id);
     }
 }

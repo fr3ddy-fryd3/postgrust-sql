@@ -119,10 +119,10 @@ impl QueryExecutor {
     /// Main SELECT dispatcher
     ///
     /// Routes to appropriate handler based on:
-    /// - JOIN presence → select_with_join()
-    /// - GROUP BY → select_with_group_by()
-    /// - Aggregates without GROUP BY → select_aggregate()
-    /// - Regular → select_regular()
+    /// - JOIN presence → `select_with_join()`
+    /// - GROUP BY → `select_with_group_by()`
+    /// - Aggregates without GROUP BY → `select_aggregate()`
+    /// - Regular → `select_regular()`
     pub fn select(
         db: &Database,
         distinct: bool,
@@ -146,7 +146,7 @@ impl QueryExecutor {
         if let Some(view_query) = db.views.get(&from) {
             // Parse the view's SQL
             let view_stmt = crate::parser::parse_statement(view_query)
-                .map_err(|e| DatabaseError::ParseError(e))?;
+                .map_err(DatabaseError::ParseError)?;
 
             // Execute the view query (only SELECT is supported in views)
             match view_stmt {
@@ -179,7 +179,7 @@ impl QueryExecutor {
                 }
                 _ => {
                     return Err(DatabaseError::ParseError(
-                        format!("View '{}' contains non-SELECT statement", from)
+                        format!("View '{from}' contains non-SELECT statement")
                     ));
                 }
             }
@@ -243,7 +243,7 @@ impl QueryExecutor {
             }
         }
 
-        let is_select_all = regular_col_names.len() == 1 && regular_col_names.is_empty() == false && regular_col_names[0] == "*";
+        let is_select_all = regular_col_names.len() == 1 && !regular_col_names.is_empty() && regular_col_names[0] == "*";
 
         // Only process regular columns for indices
         let column_indices: Vec<usize> = if is_select_all && case_expressions.is_empty() {
@@ -254,7 +254,7 @@ impl QueryExecutor {
                 .map(|col| {
                     table
                         .get_column_index(col)
-                        .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col)))
+                        .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col}")))
                 })
                 .collect::<Result<Vec<_>, _>>()?
         };
@@ -332,11 +332,10 @@ impl QueryExecutor {
                 }
 
                 // Index already filtered by equality, but double-check condition
-                if let Some(ref cond) = filter {
-                    if !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                if let Some(ref cond) = filter
+                    && !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
                         continue;
                     }
-                }
 
                 // Build result row: regular columns + CASE expressions
                 let mut result_row: Vec<String> = column_indices
@@ -360,11 +359,10 @@ impl QueryExecutor {
                     continue;
                 }
 
-                if let Some(ref cond) = filter {
-                    if !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                if let Some(ref cond) = filter
+                    && !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
                         continue;
                     }
-                }
 
                 // Build result row: regular columns + CASE expressions
                 let mut result_row: Vec<String> = column_indices
@@ -386,7 +384,7 @@ impl QueryExecutor {
         if let Some((sort_column, sort_order)) = order_by {
             let sort_col_idx = table
                 .get_column_index(&sort_column)
-                .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", sort_column)))?;
+                .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {sort_column}")))?;
 
             rows_with_data.sort_by(|(row_a, _), (row_b, _)| {
                 let val_a = &row_a.values[sort_col_idx];
@@ -523,7 +521,7 @@ impl QueryExecutor {
                         let col_idx = table
                             .get_column_index(col_name)
                             .ok_or_else(|| {
-                                DatabaseError::ParseError(format!("Unknown column: {}", col_name))
+                                DatabaseError::ParseError(format!("Unknown column: {col_name}"))
                             })?;
                         rows.iter()
                             .filter(|row| !matches!(row.values[col_idx], Value::Null))
@@ -535,7 +533,7 @@ impl QueryExecutor {
             AggregateFunction::Sum(col_name) => {
                 let col_idx = table
                     .get_column_index(col_name)
-                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col_name)))?;
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
 
                 let mut sum_int: Option<i64> = None;
                 let mut sum_real: Option<f64> = None;
@@ -561,12 +559,12 @@ impl QueryExecutor {
                     "0".to_string()
                 };
 
-                Ok((value, format!("sum({})", col_name)))
+                Ok((value, format!("sum({col_name})")))
             }
             AggregateFunction::Avg(col_name) => {
                 let col_idx = table
                     .get_column_index(col_name)
-                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col_name)))?;
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
 
                 let mut sum = 0.0;
                 let mut count = 0;
@@ -586,13 +584,13 @@ impl QueryExecutor {
                     }
                 }
 
-                let avg = if count > 0 { sum / count as f64 } else { 0.0 };
-                Ok((avg.to_string(), format!("avg({})", col_name)))
+                let avg = if count > 0 { sum / f64::from(count) } else { 0.0 };
+                Ok((avg.to_string(), format!("avg({col_name})")))
             }
             AggregateFunction::Min(col_name) => {
                 let col_idx = table
                     .get_column_index(col_name)
-                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col_name)))?;
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
 
                 let mut min_val: Option<&Value> = None;
 
@@ -617,13 +615,13 @@ impl QueryExecutor {
                     }
                 }
 
-                let value = min_val.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string());
-                Ok((value, format!("min({})", col_name)))
+                let value = min_val.map_or_else(|| "NULL".to_string(), std::string::ToString::to_string);
+                Ok((value, format!("min({col_name})")))
             }
             AggregateFunction::Max(col_name) => {
                 let col_idx = table
                     .get_column_index(col_name)
-                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {}", col_name)))?;
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
 
                 let mut max_val: Option<&Value> = None;
 
@@ -648,8 +646,8 @@ impl QueryExecutor {
                     }
                 }
 
-                let value = max_val.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string());
-                Ok((value, format!("max({})", col_name)))
+                let value = max_val.map_or_else(|| "NULL".to_string(), std::string::ToString::to_string);
+                Ok((value, format!("max({col_name})")))
             }
         }
     }
@@ -714,7 +712,7 @@ impl QueryExecutor {
                 .iter()
                 .map(|&idx| row.values[idx].to_string())
                 .collect();
-            groups.entry(key).or_insert_with(Vec::new).push(row);
+            groups.entry(key).or_default().push(row);
         }
 
         // Build result rows
@@ -728,8 +726,7 @@ impl QueryExecutor {
                     // Must be in GROUP BY list
                     if !group_by.contains(name) {
                         return Err(DatabaseError::ParseError(format!(
-                            "Column '{}' must appear in GROUP BY clause or be used in an aggregate function",
-                            name
+                            "Column '{name}' must appear in GROUP BY clause or be used in an aggregate function"
                         )));
                     }
                     column_names.push(name.clone());
@@ -863,8 +860,7 @@ impl QueryExecutor {
             let parts: Vec<&str> = ref_str.split('.').collect();
             if parts.len() != 2 {
                 return Err(DatabaseError::ParseError(format!(
-                    "Invalid column reference: {}",
-                    ref_str
+                    "Invalid column reference: {ref_str}"
                 )));
             }
             Ok((parts[0].to_string(), parts[1].to_string()))
@@ -921,9 +917,9 @@ impl QueryExecutor {
                     let mut combined_row: Vec<String> = main_row
                         .values
                         .iter()
-                        .map(|v| v.to_string())
+                        .map(std::string::ToString::to_string)
                         .collect();
-                    combined_row.extend(join_row.values.iter().map(|v| v.to_string()));
+                    combined_row.extend(join_row.values.iter().map(std::string::ToString::to_string));
                     result_rows.push(combined_row);
                 }
             }
@@ -933,7 +929,7 @@ impl QueryExecutor {
                 let mut combined_row: Vec<String> = main_row
                     .values
                     .iter()
-                    .map(|v| v.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect();
                 combined_row.extend(vec!["NULL".to_string(); join_table.columns.len()]);
                 result_rows.push(combined_row);
@@ -955,7 +951,7 @@ impl QueryExecutor {
 
                 if !matched {
                     let mut combined_row = vec!["NULL".to_string(); main_table.columns.len()];
-                    combined_row.extend(join_row.values.iter().map(|v| v.to_string()));
+                    combined_row.extend(join_row.values.iter().map(std::string::ToString::to_string));
                     result_rows.push(combined_row);
                 }
             }

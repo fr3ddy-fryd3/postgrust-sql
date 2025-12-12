@@ -11,13 +11,14 @@ use super::error::DatabaseError;
 pub struct ServerInstance {
     /// Все базы данных: name -> Database
     pub databases: HashMap<String, Database>,
-    /// Метаданные баз данных: name -> DatabaseMetadata
+    /// Метаданные баз данных: name -> `DatabaseMetadata`
     pub database_metadata: HashMap<String, DatabaseMetadata>,
     /// Все пользователи: username -> User
     pub users: HashMap<String, User>,
 }
 
 impl ServerInstance {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             databases: HashMap::new(),
@@ -27,6 +28,7 @@ impl ServerInstance {
     }
 
     /// Создает начальную конфигурацию (суперпользователь + БД)
+    #[must_use] 
     pub fn initialize(
         superuser_name: &str,
         superuser_password: &str,
@@ -96,6 +98,7 @@ impl ServerInstance {
     }
 
     /// Получает БД
+    #[must_use] 
     pub fn get_database(&self, name: &str) -> Option<&Database> {
         self.databases.get(name)
     }
@@ -106,6 +109,7 @@ impl ServerInstance {
     }
 
     /// Получает метаданные БД
+    #[must_use] 
     pub fn get_database_metadata(&self, name: &str) -> Option<&DatabaseMetadata> {
         self.database_metadata.get(name)
     }
@@ -116,6 +120,7 @@ impl ServerInstance {
     }
 
     /// Проверяет пароль пользователя
+    #[must_use] 
     pub fn authenticate(&self, username: &str, password: &str) -> bool {
         if let Some(user) = self.users.get(username) {
             user.verify_password(password)
@@ -127,11 +132,10 @@ impl ServerInstance {
     /// Проверяет, есть ли у пользователя право на БД
     pub fn check_privilege(&self, username: &str, db_name: &str, privilege: &Privilege) -> Result<bool, DatabaseError> {
         // Суперпользователь имеет все права
-        if let Some(user) = self.users.get(username) {
-            if user.is_superuser {
+        if let Some(user) = self.users.get(username)
+            && user.is_superuser {
                 return Ok(true);
             }
-        }
 
         // Проверяем права в метаданных БД
         if let Some(db_meta) = self.database_metadata.get(db_name) {

@@ -20,11 +20,11 @@ pub struct Table {
     pub name: String,
     pub columns: Vec<Column>,
     /// v2.0.0: Kept only for serialization compatibility
-    /// Actual row storage uses PagedTable (managed by DatabaseStorage)
+    /// Actual row storage uses `PagedTable` (managed by `DatabaseStorage`)
     /// This field is synced during checkpoint for persistence
     #[deprecated(since = "2.0.0", note = "Use DatabaseStorage::get_paged_table() instead")]
     pub rows: Vec<Row>,
-    /// Sequence counters for SERIAL columns: column_name -> next_value
+    /// Sequence counters for SERIAL columns: `column_name` -> `next_value`
     pub sequences: HashMap<String, i64>,
     // Note: PagedTable cannot be stored here because:
     // 1. Arc<Mutex<PageManager>> is not serializable
@@ -33,6 +33,7 @@ pub struct Table {
 }
 
 impl Table {
+    #[must_use] 
     pub fn new(name: String, columns: Vec<Column>) -> Self {
         let mut sequences = HashMap::new();
 
@@ -59,6 +60,7 @@ impl Table {
         Ok(())
     }
 
+    #[must_use] 
     pub fn get_column_index(&self, name: &str) -> Option<usize> {
         self.columns.iter().position(|c| c.name == name)
     }

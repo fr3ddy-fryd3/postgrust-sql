@@ -37,7 +37,7 @@ impl DdlExecutor {
                             }
                         } else {
                             return Err(DatabaseError::ParseError(format!(
-                                "Unknown enum type '{}'", name
+                                "Unknown enum type '{name}'"
                             )));
                         }
                     }
@@ -50,7 +50,7 @@ impl DdlExecutor {
                     nullable: def.nullable,
                     primary_key: def.primary_key,
                     unique: def.unique,
-                    foreign_key: def.foreign_key.clone(),
+                    foreign_key: def.foreign_key,
                 })
             })
             .collect::<Result<Vec<Column>, DatabaseError>>()?;
@@ -88,8 +88,7 @@ impl DdlExecutor {
             db_storage.create_table(name.clone())?;
             db.create_table(table)?;
             Ok(QueryResult::Success(format!(
-                "Table '{}' created successfully (page-based storage)",
-                name
+                "Table '{name}' created successfully (page-based storage)"
             )))
         } else {
             // Legacy storage: use Vec<Row> embedded in Table
@@ -100,8 +99,7 @@ impl DdlExecutor {
 
             db.create_table(table)?;
             Ok(QueryResult::Success(format!(
-                "Table '{}' created successfully",
-                name
+                "Table '{name}' created successfully"
             )))
         }
     }
@@ -119,8 +117,7 @@ impl DdlExecutor {
 
         db.drop_table(&name)?;
         Ok(QueryResult::Success(format!(
-            "Table '{}' dropped successfully",
-            name
+            "Table '{name}' dropped successfully"
         )))
     }
 
@@ -137,7 +134,7 @@ impl DdlExecutor {
         operation: AlterTableOperation,
         storage: Option<&mut StorageEngine>,
     ) -> Result<QueryResult, DatabaseError> {
-        use AlterTableOperation::*;
+        use AlterTableOperation::{AddColumn, DropColumn, RenameColumn, RenameTable};
 
         match operation {
             AddColumn(column_def) => {
@@ -186,7 +183,7 @@ impl DdlExecutor {
                     }
                 } else {
                     return Err(DatabaseError::ParseError(format!(
-                        "Unknown enum type '{}'", name
+                        "Unknown enum type '{name}'"
                     )));
                 }
             }
@@ -207,7 +204,7 @@ impl DdlExecutor {
 
             if !ref_col.primary_key {
                 return Err(DatabaseError::ForeignKeyViolation(
-                    format!("Referenced column must be PRIMARY KEY")
+                    "Referenced column must be PRIMARY KEY".to_string()
                 ));
             }
         }
@@ -257,8 +254,7 @@ impl DdlExecutor {
         // Find column index
         let col_idx = table.columns.iter().position(|c| c.name == column_name)
             .ok_or_else(|| DatabaseError::ParseError(format!(
-                "Column '{}' not found in table '{}'",
-                column_name, table_name
+                "Column '{column_name}' not found in table '{table_name}'"
             )))?;
 
         // Prevent dropping PRIMARY KEY columns
@@ -282,8 +278,7 @@ impl DdlExecutor {
         }
 
         Ok(QueryResult::Success(format!(
-            "Column '{}' dropped from table '{}'",
-            column_name, table_name
+            "Column '{column_name}' dropped from table '{table_name}'"
         )))
     }
 
@@ -301,13 +296,13 @@ impl DdlExecutor {
         // Check if old column exists
         let col_idx = table.columns.iter().position(|c| c.name == old_name)
             .ok_or_else(|| DatabaseError::ParseError(format!(
-                "Column '{}' not found", old_name
+                "Column '{old_name}' not found"
             )))?;
 
         // Check if new name already exists
         if table.columns.iter().any(|c| c.name == new_name) {
             return Err(DatabaseError::ParseError(format!(
-                "Column '{}' already exists", new_name
+                "Column '{new_name}' already exists"
             )));
         }
 
@@ -320,8 +315,7 @@ impl DdlExecutor {
         table.columns[col_idx].name = new_name.clone();
 
         Ok(QueryResult::Success(format!(
-            "Column '{}' renamed to '{}'",
-            old_name, new_name
+            "Column '{old_name}' renamed to '{new_name}'"
         )))
     }
 
@@ -351,8 +345,7 @@ impl DdlExecutor {
         db.tables.insert(new_name.clone(), table);
 
         Ok(QueryResult::Success(format!(
-            "Table '{}' renamed to '{}'",
-            old_name, new_name
+            "Table '{old_name}' renamed to '{new_name}'"
         )))
     }
 

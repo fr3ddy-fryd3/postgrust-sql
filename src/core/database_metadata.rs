@@ -12,6 +12,7 @@ pub struct DatabaseMetadata {
 }
 
 impl DatabaseMetadata {
+    #[must_use] 
     pub fn new(name: String, owner: String) -> Self {
         let mut privileges = HashMap::new();
         // Владелец получает все права автоматически
@@ -30,7 +31,7 @@ impl DatabaseMetadata {
     pub fn grant(&mut self, username: &str, privilege: Privilege) {
         self.privileges
             .entry(username.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(privilege);
     }
 
@@ -42,6 +43,7 @@ impl DatabaseMetadata {
     }
 
     /// Проверяет, есть ли у пользователя право
+    #[must_use] 
     pub fn has_privilege(&self, username: &str, privilege: &Privilege) -> bool {
         if let Some(privs) = self.privileges.get(username) {
             privs.contains(&Privilege::All) || privs.contains(privilege)

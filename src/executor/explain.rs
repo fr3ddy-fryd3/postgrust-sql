@@ -89,7 +89,7 @@ impl ExplainExecutor {
             table_name: table_name.to_string(),
             index_name,
             index_type,
-            filter: filter.as_ref().map(|c| Self::format_condition(c)),
+            filter: filter.as_ref().map(Self::format_condition),
             estimated_rows,
             cost,
         })
@@ -224,7 +224,7 @@ impl ExplainExecutor {
                     plan.table_name
                 ));
                 if let Some(ref filter) = plan.filter {
-                    output.push_str(&format!("  Filter: {}\n", filter));
+                    output.push_str(&format!("  Filter: {filter}\n"));
                 }
             }
             ScanType::IndexScan | ScanType::UniqueIndexScan => {
@@ -242,7 +242,7 @@ impl ExplainExecutor {
                 ));
                 output.push_str(&format!("  on {}\n", plan.table_name));
                 if let Some(ref filter) = plan.filter {
-                    output.push_str(&format!("  Index Cond: {}\n", filter));
+                    output.push_str(&format!("  Index Cond: {filter}\n"));
                 }
             }
         }
@@ -274,19 +274,19 @@ impl ExplainExecutor {
 
     fn format_condition(cond: &Condition) -> String {
         match cond {
-            Condition::Equals(col, val) => format!("{} = {:?}", col, val),
-            Condition::NotEquals(col, val) => format!("{} != {:?}", col, val),
-            Condition::GreaterThan(col, val) => format!("{} > {:?}", col, val),
-            Condition::LessThan(col, val) => format!("{} < {:?}", col, val),
-            Condition::GreaterThanOrEqual(col, val) => format!("{} >= {:?}", col, val),
-            Condition::LessThanOrEqual(col, val) => format!("{} <= {:?}", col, val),
+            Condition::Equals(col, val) => format!("{col} = {val:?}"),
+            Condition::NotEquals(col, val) => format!("{col} != {val:?}"),
+            Condition::GreaterThan(col, val) => format!("{col} > {val:?}"),
+            Condition::LessThan(col, val) => format!("{col} < {val:?}"),
+            Condition::GreaterThanOrEqual(col, val) => format!("{col} >= {val:?}"),
+            Condition::LessThanOrEqual(col, val) => format!("{col} <= {val:?}"),
             Condition::Between(col, low, high) => {
-                format!("{} BETWEEN {:?} AND {:?}", col, low, high)
+                format!("{col} BETWEEN {low:?} AND {high:?}")
             }
-            Condition::Like(col, pattern) => format!("{} LIKE '{}'", col, pattern),
-            Condition::In(col, values) => format!("{} IN ({:?})", col, values),
-            Condition::IsNull(col) => format!("{} IS NULL", col),
-            Condition::IsNotNull(col) => format!("{} IS NOT NULL", col),
+            Condition::Like(col, pattern) => format!("{col} LIKE '{pattern}'"),
+            Condition::In(col, values) => format!("{col} IN ({values:?})"),
+            Condition::IsNull(col) => format!("{col} IS NULL"),
+            Condition::IsNotNull(col) => format!("{col} IS NOT NULL"),
             Condition::And(left, right) => {
                 format!("({}) AND ({})", Self::format_condition(left), Self::format_condition(right))
             }

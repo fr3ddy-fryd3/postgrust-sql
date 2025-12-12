@@ -32,3 +32,17 @@ page_storage = []
 strip = true
 lto = "fat"
 codegen-units = 1
+
+[lints.clippy]
+# Самые строгие группы линтов
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Дополнительные строгие проверки
+all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = 0 }
+suspicious = { level = "warn", priority = 0 }
+complexity = { level = "warn", priority = 0 }
+perf = { level = "warn", priority = 0 }
+style = { level = "warn", priority = 0 }
