@@ -544,7 +544,7 @@ impl DmlExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Table, Column, DataType};
+    use crate::types::{Column, DataType};
 
     #[test]
     fn test_reorder_values() {

@@ -81,7 +81,6 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Value;
 
     #[test]
     fn test_parse_create_table() {
