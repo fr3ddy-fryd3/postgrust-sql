@@ -143,7 +143,7 @@ impl QueryExecutor {
                 super::index::IndexExecutor::drop_index(db, name)
             }
             Statement::Vacuum { table } => {
-                super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, Some(database_storage))
+                super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, database_storage)
             }
             Statement::Explain { statement } => {
                 let result = super::explain::ExplainExecutor::explain(db, &statement)?;

@@ -184,8 +184,58 @@ impl PagedTable {
         Ok(())
     }
 
+    /// VACUUM - physically remove dead tuples (rows with xmax < oldest_tx)
+    ///
+    /// Scans all pages and deletes slots containing dead rows that are no longer
+    /// visible to any active transaction.
+    ///
+    /// # Arguments
+    /// * `oldest_tx` - Cleanup horizon: only remove rows with xmax < oldest_tx
+    ///
+    /// # Returns
+    /// Number of tuples removed
+    pub fn vacuum(&mut self, oldest_tx: u64) -> Result<usize, DatabaseError> {
+        let mut removed_count = 0;
+        let page_manager = self.page_manager.lock().unwrap();
+
+        // Iterate through all pages
+        for page_num in 0..self.page_count {
+            let page_id = PageId::new(self.table_id, page_num);
+            let guard = page_manager.get_page_mut(page_id)?;
+
+            // Scan all slots in this page
+            let count = guard.get_mut(|page| {
+                let mut local_removed = 0;
+
+                // Collect indices of dead rows (iterate backwards to avoid index issues)
+                let mut dead_slots: Vec<u16> = Vec::new();
+
+                for slot_idx in 0..page.slots.len() {
+                    if let Ok(row) = page.get_row(slot_idx as u16) {
+                        // Check if row is dead (has xmax and xmax < oldest_tx)
+                        if row.is_dead(oldest_tx) {
+                            dead_slots.push(slot_idx as u16);
+                        }
+                    }
+                }
+
+                // Physically delete dead rows
+                for slot_idx in dead_slots.iter().rev() {
+                    page.delete_row(*slot_idx)?;
+                    local_removed += 1;
+                }
+
+                Ok(local_removed)
+            })?;
+
+            removed_count += count;
+        }
+
+        Ok(removed_count)
+    }
+
     /// Get statistics
-    #[must_use] 
+    #[must_use]
     pub const fn stats(&self) -> PagedTableStats {
         PagedTableStats {
             table_id: self.table_id,
