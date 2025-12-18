@@ -1,7 +1,6 @@
 /// Index management executor
 ///
 /// Handles CREATE INDEX, DROP INDEX operations
-
 use crate::types::{Database, DatabaseError};
 use crate::executor::QueryResult;
 use crate::index::{Index, IndexType, BTreeIndex, HashIndex};

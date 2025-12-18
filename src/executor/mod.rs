@@ -10,7 +10,6 @@
 /// - dml: INSERT/UPDATE/DELETE operations ✅
 /// - ddl: CREATE/DROP/ALTER TABLE operations ✅
 /// - queries: SELECT operations (regular, aggregate, join, group by) (TODO)
-
 // v2.0.0: Renamed from legacy.rs to dispatcher.rs
 // Thin dispatcher that delegates to modular executors
 #[path = "dispatcher.rs"]

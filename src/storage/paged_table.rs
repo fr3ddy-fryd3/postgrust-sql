@@ -184,13 +184,13 @@ impl PagedTable {
         Ok(())
     }
 
-    /// VACUUM - physically remove dead tuples (rows with xmax < oldest_tx)
+    /// VACUUM - physically remove dead tuples (rows with xmax < `oldest_tx`)
     ///
     /// Scans all pages and deletes slots containing dead rows that are no longer
     /// visible to any active transaction.
     ///
     /// # Arguments
-    /// * `oldest_tx` - Cleanup horizon: only remove rows with xmax < oldest_tx
+    /// * `oldest_tx` - Cleanup horizon: only remove rows with xmax < `oldest_tx`
     ///
     /// # Returns
     /// Number of tuples removed

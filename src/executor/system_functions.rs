@@ -8,7 +8,6 @@
 /// - `current_schema()` - Current schema name
 ///
 /// These functions are intercepted in SELECT queries and evaluated specially.
-
 use crate::core::{Database, DatabaseError};
 
 pub struct SystemFunctions;

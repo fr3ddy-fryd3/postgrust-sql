@@ -4,7 +4,6 @@
 /// - Scans tables for dead tuples (xmax < `oldest_active_tx`)
 /// - Removes dead tuples from storage
 /// - Works with both Vec<Row> (legacy) and `PagedTable` storage
-
 use crate::core::{Database, DatabaseError};
 use crate::transaction::TransactionManager;
 use super::dispatcher_executor::QueryResult;
@@ -59,7 +58,7 @@ impl VacuumExecutor {
         )))
     }
 
-    /// Vacuum single table using PagedTable
+    /// Vacuum single table using `PagedTable`
     fn vacuum_table(
         table_name: &str,
         oldest_tx: u64,

@@ -7,7 +7,6 @@
 /// - No range queries (>, <, BETWEEN)
 /// - No ordering (cannot be used for ORDER BY)
 /// - Higher memory usage than B-tree for small datasets
-
 use crate::types::{DatabaseError, Value};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};

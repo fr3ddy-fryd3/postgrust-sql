@@ -1,7 +1,6 @@
 /// DDL (Data Definition Language) operations
 ///
 /// CREATE TABLE, DROP TABLE, ALTER TABLE, SHOW TABLES
-
 use crate::types::{Database, DatabaseError, Table, Column, DataType};
 use crate::parser::{ColumnDef, AlterTableOperation};
 use crate::storage::StorageEngine;

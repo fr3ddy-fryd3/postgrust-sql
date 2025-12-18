@@ -6,7 +6,6 @@
 /// - Estimated row count
 /// - Join strategy
 /// - Filter conditions
-
 use crate::parser::{Statement, Condition};
 use crate::types::{Database, DatabaseError};
 

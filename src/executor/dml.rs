@@ -2,7 +2,6 @@
 ///
 /// INSERT, UPDATE, DELETE using `RowStorage` abstraction.
 /// This allows seamless operation with both Vec<Row> and `PagedTable`.
-
 use crate::types::{Database, DatabaseError, Row, Value, Column, DataType};
 use crate::parser::Condition;
 use crate::storage::StorageEngine;

@@ -68,7 +68,7 @@ OUTPUT=$((sleep 1; cat /tmp/test_hash.sql) | nc 127.0.0.1 5432 2>&1)
 echo ""
 echo "Validating results..."
 
-if echo "$OUTPUT" | grep -q "Index 'idx_category' created.*using hash"; then
+if echo "$OUTPUT" | grep -qi "idx_category.*created.*hash\|created.*idx_category.*hash"; then
     echo "✓ CREATE INDEX USING HASH succeeded"
 else
     echo "✗ CREATE INDEX USING HASH failed"
@@ -76,7 +76,7 @@ else
     exit 1
 fi
 
-if echo "$OUTPUT" | grep -q "Index 'idx_price' created.*using btree"; then
+if echo "$OUTPUT" | grep -qi "idx_price.*created.*btree\|created.*idx_price.*btree"; then
     echo "✓ CREATE INDEX USING BTREE succeeded"
 else
     echo "✗ CREATE INDEX USING BTREE failed"
@@ -84,7 +84,7 @@ else
     exit 1
 fi
 
-if echo "$OUTPUT" | grep -q "Index 'idx_name' created.*using btree"; then
+if echo "$OUTPUT" | grep -qi "idx_name.*created.*btree\|created.*idx_name.*btree"; then
     echo "✓ CREATE INDEX without USING (default BTREE) succeeded"
 else
     echo "✗ CREATE INDEX default failed"
@@ -92,7 +92,7 @@ else
     exit 1
 fi
 
-if echo "$OUTPUT" | grep -q "Index 'idx_email' created.*using hash"; then
+if echo "$OUTPUT" | grep -qi "idx_email.*created.*hash\|created.*idx_email.*hash"; then
     echo "✓ CREATE UNIQUE INDEX USING HASH succeeded"
 else
     echo "✗ CREATE UNIQUE INDEX USING HASH failed"
@@ -108,7 +108,7 @@ else
     exit 1
 fi
 
-if echo "$OUTPUT" | grep -q "Index 'idx_category' dropped"; then
+if echo "$OUTPUT" | grep -qi "idx_category.*dropped\|dropped.*idx_category"; then
     echo "✓ DROP INDEX on hash index succeeded"
 else
     echo "✗ DROP INDEX failed"

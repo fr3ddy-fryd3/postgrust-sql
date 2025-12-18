@@ -10,7 +10,6 @@
 /// - `information_schema.columns`
 ///
 /// These are read-only metadata tables queried by psql, `pg_dump`, etc.
-
 use crate::core::{Database, DatabaseError, DataType};
 use super::dispatcher_executor::QueryResult;
 

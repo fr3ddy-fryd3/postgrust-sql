@@ -1,7 +1,6 @@
 /// Query (SELECT) operations
 ///
 /// SELECT, JOIN, aggregate functions, GROUP BY
-
 use crate::types::{Database, DatabaseError, Row, Table, Value};
 use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression};
 use crate::transaction::TransactionManager;
