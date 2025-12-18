@@ -6,13 +6,16 @@ Guidance for Claude Code when working with this repository.
 **НЕ СОЗДАВАТЬ НИКОМУ НАХУЙ НЕ НУЖНЫЕ .MD ФАЙЛЫ, КОТОРЫЕ ЗАСОРЯЮТ РЕПОЗИТОРИЙ!**
 Только ROADMAP.md и README.md!
 
+**НЕ ДЕЛАТЬ КОММИТЫ И ТЕГИ БЕЗ ЯВНОГО РАЗРЕШЕНИЯ ПОЛЬЗОВАТЕЛЯ!**
+Всегда спрашивать перед git commit и git tag.
+
 ## Quick Start
 
 **Run:**
 ```bash
 cargo run --release                        # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 159 tests (all passing ✅ v2.0.2)
+cargo test                                 # 173 tests (all passing ✅ v2.1.0)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
 ./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
@@ -26,14 +29,15 @@ printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 - PostgreSQL-compatible wire protocol (port 5432)
 - 23 data types (~45% PostgreSQL compatibility)
 - FOREIGN KEY, JOIN (INNER/LEFT/RIGHT), SERIAL/BIGSERIAL
-- Transactions (snapshot isolation), MVCC (xmin/xmax)
+- **Multi-connection transaction isolation (v2.1.0)** - DML properly isolated between connections ✨
+- Transactions (BEGIN/COMMIT/ROLLBACK), MVCC (xmin/xmax)
 - Binary storage + WAL (checkpoint every 100 ops)
 - Page-based storage (v1.5.0, 125x write amplification improvement)
 - VACUUM command for MVCC cleanup (v1.5.1)
 - B-tree & Hash indexes with automatic query optimization (v1.7.0)
 - Extended WHERE operators (>=, <=, BETWEEN, LIKE, IN, IS NULL) + EXPLAIN (v1.8.0)
 - Composite (multi-column) indexes with AND query optimization (v1.9.0)
-- **CASE expressions, UNION/INTERSECT/EXCEPT set operations (v1.10.0)** ✨
+- CASE expressions, UNION/INTERSECT/EXCEPT set operations (v1.10.0)
 
 ## Architecture (v1.9.0)
 
@@ -323,12 +327,22 @@ Allowed lints (configured in `src/lib.rs`):
 - Hash indexes only support equality (=) - use B-tree for range queries
 - Single JOIN per query
 - WHERE with JOIN not fully supported
-- Transactions not isolated between connections
+- **DDL operations (CREATE/DROP/ALTER TABLE) auto-commit even inside transactions** (v2.1.0 limitation)
+- DML (INSERT/UPDATE/DELETE) properly isolated between connections (v2.1.0 ✅)
 - EXPLAIN only supports SELECT (not INSERT/UPDATE/DELETE)
 
 ## Версионирование
 
-**Current**: v2.0.2 (Complete PagedTable Migration)
+**Current**: v2.1.0 (Multi-Connection Transaction Isolation - DML only)
+
+**v2.1.0 Changes:**
+- 🔐 GlobalTransactionManager with MVCC snapshot isolation
+- ✨ DML (INSERT/UPDATE/DELETE) properly isolated between connections
+- 🔄 Auto-commit pattern for non-transactional operations
+- 📊 READ COMMITTED isolation level (new snapshot per statement)
+- ⚠️ DDL operations still auto-commit (planned for v2.3.0)
+- ✅ 173/173 unit tests passing
+- ✅ Multi-connection isolation test passing
 
 **v2.0.2 Changes:**
 - 🧹 Removed ALL deprecated Table.rows usage (0 warnings, was 17)

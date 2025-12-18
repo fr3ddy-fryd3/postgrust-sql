@@ -4,6 +4,54 @@
 
 ---
 
+## ✅ v2.1.0 - Multi-Connection Transaction Isolation (DML only)
+
+**Цель:** Изоляция DML операций между разными TCP connections
+**Статус:** Completed (2025-12-18)
+**Сложность:** Высокая
+**Breaking Changes:** No
+
+### Реализовано:
+1. ✅ **GlobalTransactionManager** - shared state через Arc + AtomicU64
+2. ✅ **MVCC Snapshot** - структура для visibility checks (xmin, xmax, active_txs)
+3. ✅ **Row::is_visible_to_snapshot()** - PostgreSQL-style visibility rules
+4. ✅ **Auto-commit pattern** - DML вне транзакций автоматически commit
+5. ✅ **READ COMMITTED isolation** - новый snapshot перед каждым statement
+6. ✅ **173/173 unit tests passing**
+7. ✅ **Multi-connection isolation test** - test_mvcc_isolation.sh
+
+### Изменения:
+- **src/transaction/global_manager.rs** (NEW): Shared transaction manager
+- **src/transaction/snapshot.rs**: Per-connection transaction state
+- **src/core/row.rs**: Added `is_visible_to_snapshot()`
+- **src/executor/dml.rs**: INSERT/UPDATE/DELETE с auto-commit pattern
+- **src/executor/queries.rs**: SELECT использует snapshot visibility
+- **src/executor/dispatcher.rs**: Передает active_tx_id в executors
+- **src/network/server.rs**: BEGIN/COMMIT/ROLLBACK с GlobalTransactionManager
+
+### Ключевое достижение:
+```rust
+// Connection 1:
+BEGIN;
+INSERT INTO users VALUES (1, 'Alice');
+-- НЕ COMMIT
+
+// Connection 2:
+SELECT * FROM users;
+-- Результат: пусто! Uncommitted row НЕ виден ✅
+```
+
+### ⚠️ Известное ограничение:
+**DDL операции (CREATE/DROP/ALTER TABLE) всегда auto-commit, даже внутри транзакций!**
+- Изменения схемы видны сразу всем connections
+- Запланировано исправление в v2.3.0 через system catalogs
+
+### Запланировано на v2.3.0:
+- Transactional DDL с системными каталогами
+- Полная PostgreSQL-совместимость для DDL
+
+---
+
 ## ✅ v2.0.2 - Complete PagedTable Migration
 
 **Цель:** Удалить все deprecated Table.rows usage + Clippy cleanup

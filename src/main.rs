@@ -37,14 +37,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ServerConfig::from_env();
 
     println!("╔══════════════════════════════════════════════════════════╗");
-    println!("║          PostgrustSQL Server Starting...                ║");
+    println!("║          PostgrustSQL Server Starting...                 ║");
     println!("╠══════════════════════════════════════════════════════════╣");
     println!("║ Configuration:                                           ║");
-    println!("║  • Superuser:    {:<42} ║", config.user);
-    println!("║  • Database:     {:<42} ║", config.database);
-    println!("║  • Host:Port:    {}:{:<37} ║", config.host, config.port);
-    println!("║  • Data Dir:     {:<42} ║", config.data_dir);
-    println!("║  • Init DB:      {:<42} ║", config.initdb);
+    println!("║  • Superuser:    {:<39} ║", config.user);
+    println!("║  • Database:     {:<39} ║", config.database);
+    println!("║  • Host:Port:    {}:{:<29} ║", config.host, config.port);
+    println!("║  • Data Dir:     {:<39} ║", config.data_dir);
+    println!("║  • Init DB:      {:<39} ║", config.initdb);
     println!("╚══════════════════════════════════════════════════════════╝");
 
     let server = Server::new_with_config(
