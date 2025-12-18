@@ -5,7 +5,7 @@
 use crate::types::{Database, DatabaseError, Row, Value, Column, DataType};
 use crate::parser::Condition;
 use crate::storage::StorageEngine;
-use crate::transaction::TransactionManager;
+use crate::transaction::GlobalTransactionManager;
 use super::storage_adapter::RowStorage;
 use super::dispatcher_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
@@ -31,8 +31,9 @@ impl DmlExecutor {
         values: Vec<Value>,
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         indexes: &mut HashMap<String, Index>,
+        active_tx_id: Option<u64>,
     ) -> Result<QueryResult, DatabaseError> {
         // Reorder values to match table schema if columns specified
         let mut ordered_values = Self::reorder_values(table_columns, columns, values)?;
@@ -49,8 +50,15 @@ impl DmlExecutor {
         Self::validate_unique_constraints(table_columns, &ordered_values, storage, tx_manager)?;
 
         // Create row with MVCC
-        let current_tx_id = tx_manager.current_tx_id();
-        let row = Row::new_with_xmin(ordered_values.clone(), current_tx_id);
+        // v2.1.0: Use active_tx_id if in transaction, otherwise allocate new tx_id
+        let (tx_id, auto_commit) = if let Some(tx_id) = active_tx_id {
+            (tx_id, false)
+        } else {
+            let (new_tx_id, _snapshot) = tx_manager.begin_transaction();
+            (new_tx_id, true)
+        };
+
+        let row = Row::new_with_xmin(ordered_values.clone(), tx_id);
 
         // Log to WAL before executing
         if let Some(se) = storage_engine {
@@ -94,6 +102,11 @@ impl DmlExecutor {
                     let current_seq = sequences_mut.get(&col.name).copied().unwrap_or(1);
                     sequences_mut.insert(col.name.clone(), current_seq.max(val + 1));
                 }
+        }
+
+        // v2.1.0: Auto-commit if not in explicit transaction
+        if auto_commit {
+            tx_manager.commit_transaction(tx_id);
         }
 
         Ok(QueryResult::Success("1 row inserted".to_string()))
@@ -203,7 +216,7 @@ impl DmlExecutor {
         all_tables: &std::collections::HashMap<String, crate::types::Table>,
         columns: &[Column],
         values: &[Value],
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<(), DatabaseError> {
         for (idx, col) in columns.iter().enumerate() {
@@ -260,7 +273,7 @@ impl DmlExecutor {
         db: &Database,
         columns: &[Column],
         values: &[Value],
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
     ) -> Result<(), DatabaseError> {
         // Legacy version - uses deprecated Table.rows directly
         for (idx, col) in columns.iter().enumerate() {
@@ -309,7 +322,7 @@ impl DmlExecutor {
         columns: &[Column],
         values: &[Value],
         storage: &S,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
     ) -> Result<(), DatabaseError> {
         let all_rows = storage.get_all()?;
         let current_tx_id = tx_manager.current_tx_id();
@@ -367,9 +380,10 @@ impl DmlExecutor {
         filter: Option<Condition>,
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         table_name: &str,
         indexes: &mut HashMap<String, Index>,
+        active_tx_id: Option<u64>,
     ) -> Result<QueryResult, DatabaseError> {
         // Pre-calculate column indices
         let column_updates: Vec<(usize, Value)> = assignments
@@ -383,8 +397,13 @@ impl DmlExecutor {
             })
             .collect::<Result<Vec<_>, DatabaseError>>()?;
 
-        // Get current transaction ID for MVCC
-        let current_tx_id = tx_manager.current_tx_id();
+        // v2.1.0: Use active_tx_id if in transaction, otherwise allocate new tx_id
+        let (current_tx_id, auto_commit) = if let Some(tx_id) = active_tx_id {
+            (tx_id, false)
+        } else {
+            let (new_tx_id, _snapshot) = tx_manager.begin_transaction();
+            (new_tx_id, true)
+        };
 
         // Define predicate and updater closures
         let predicate = |row: &Row| -> bool {
@@ -476,6 +495,11 @@ impl DmlExecutor {
             // storage_engine.log_update(table_name, ...)?;
         }
 
+        // v2.1.0: Auto-commit if not in explicit transaction
+        if auto_commit {
+            tx_manager.commit_transaction(current_tx_id);
+        }
+
         Ok(QueryResult::Success(format!("{updated_count} row(s) updated")))
     }
 
@@ -487,12 +511,18 @@ impl DmlExecutor {
         filter: Option<Condition>,
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         table_name: &str,
         indexes: &mut HashMap<String, Index>,
+        active_tx_id: Option<u64>,
     ) -> Result<QueryResult, DatabaseError> {
-        // Get current transaction ID for MVCC
-        let current_tx_id = tx_manager.current_tx_id();
+        // v2.1.0: Use active_tx_id if in transaction, otherwise allocate new tx_id
+        let (current_tx_id, auto_commit) = if let Some(tx_id) = active_tx_id {
+            (tx_id, false)
+        } else {
+            let (new_tx_id, _snapshot) = tx_manager.begin_transaction();
+            (new_tx_id, true)
+        };
 
         // Collect rows to delete (for index updates)
         let all_rows = storage.get_all()?;
@@ -562,6 +592,11 @@ impl DmlExecutor {
             // storage_engine.log_delete(table_name, ...)?;
         }
 
+        // v2.1.0: Auto-commit if not in explicit transaction
+        if auto_commit {
+            tx_manager.commit_transaction(current_tx_id);
+        }
+
         Ok(QueryResult::Success(format!("{deleted_count} row(s) deleted")))
     }
 
@@ -578,7 +613,7 @@ impl DmlExecutor {
         _columns: Option<Vec<String>>,
         _values: Vec<Value>,
         _storage_engine: Option<&mut StorageEngine>,
-        _tx_manager: &TransactionManager,
+        _tx_manager: &GlobalTransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         // TODO: This needs refactoring due to borrow checker constraints
         // For now, legacy executor continues to use direct table.rows access

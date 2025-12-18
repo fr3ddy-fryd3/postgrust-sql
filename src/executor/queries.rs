@@ -3,7 +3,7 @@
 /// SELECT, JOIN, aggregate functions, GROUP BY
 use crate::types::{Database, DatabaseError, Row, Table, Value};
 use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression};
-use crate::transaction::TransactionManager;
+use crate::transaction::GlobalTransactionManager;
 use super::dispatcher_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
 use crate::index::Index;
@@ -133,7 +133,7 @@ impl QueryExecutor {
         order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
         offset: Option<usize>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // v2.0.0: Check if 'from' is a system catalog
@@ -221,7 +221,7 @@ impl QueryExecutor {
         order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
         offset: Option<usize>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db
@@ -269,8 +269,9 @@ impl QueryExecutor {
             column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
         }
 
-        // Get current transaction ID for visibility checks (MVCC)
-        let current_tx_id = tx_manager.current_tx_id();
+        // Get snapshot for READ COMMITTED isolation (v2.1.0)
+        // Creates new snapshot before each statement
+        let snapshot = tx_manager.get_snapshot();
 
         // Try to use index if available
         let use_index = Self::find_usable_index(db, &from, &filter);
@@ -309,7 +310,7 @@ impl QueryExecutor {
                 let row = &all_rows[row_idx];
 
                 // MVCC: Check row visibility
-                if !row.is_visible(current_tx_id) {
+                if !row.is_visible_to_snapshot(&snapshot) {
                     continue;
                 }
 
@@ -337,7 +338,7 @@ impl QueryExecutor {
             // SEQUENTIAL SCAN: Full table scan
             for row in rows_iter {
                 // MVCC: Check row visibility
-                if !row.is_visible(current_tx_id) {
+                if !row.is_visible_to_snapshot(&snapshot) {
                     continue;
                 }
 
@@ -433,15 +434,16 @@ impl QueryExecutor {
         columns: Vec<SelectColumn>,
         from: String,
         filter: Option<Condition>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db
             .get_table(&from)
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
 
-        // Get current transaction ID for visibility checks (MVCC)
-        let current_tx_id = tx_manager.current_tx_id();
+        // Get snapshot for READ COMMITTED isolation (v2.1.0)
+        // Creates new snapshot before each statement
+        let snapshot = tx_manager.get_snapshot();
 
         // Get rows from PagedTable
         let paged_table = database_storage.get_paged_table(&from)
@@ -453,7 +455,7 @@ impl QueryExecutor {
             .iter()
             .filter(|row| {
                 // MVCC: Check row visibility
-                if !row.is_visible(current_tx_id) {
+                if !row.is_visible_to_snapshot(&snapshot) {
                     return false;
                 }
 
@@ -651,7 +653,7 @@ impl QueryExecutor {
         order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
         offset: Option<usize>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         use std::collections::HashMap;
@@ -660,8 +662,8 @@ impl QueryExecutor {
             .get_table(&from)
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
 
-        // Get current transaction ID for MVCC visibility
-        let current_tx_id = tx_manager.current_tx_id();
+        // Get snapshot for READ COMMITTED isolation (v2.1.0)
+        let snapshot = tx_manager.get_snapshot();
 
         // Get indices for GROUP BY columns
         let group_by_indices: Vec<usize> = group_by
@@ -684,7 +686,7 @@ impl QueryExecutor {
         let visible_rows: Vec<&Row> = rows_vec
             .iter()
             .filter(|row| {
-                if !row.is_visible(current_tx_id) {
+                if !row.is_visible_to_snapshot(&snapshot) {
                     return false;
                 }
                 if let Some(ref f) = filter {
@@ -819,7 +821,7 @@ impl QueryExecutor {
         _order_by: Option<(String, SortOrder)>,
         limit: Option<usize>,
         offset: Option<usize>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         use crate::parser::JoinType;
@@ -829,7 +831,7 @@ impl QueryExecutor {
             .get_table(&from)
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
 
-        let current_tx_id = tx_manager.current_tx_id();
+        let snapshot = tx_manager.get_snapshot();
 
         // For now, support only one JOIN
         if joins.len() != 1 {
@@ -896,7 +898,7 @@ impl QueryExecutor {
         let mut result_rows = Vec::new();
 
         for main_row in &main_rows {
-            if !main_row.is_visible(current_tx_id) {
+            if !main_row.is_visible_to_snapshot(&snapshot) {
                 continue;
             }
 
@@ -904,7 +906,7 @@ impl QueryExecutor {
             let mut matched = false;
 
             for join_row in &join_rows {
-                if !join_row.is_visible(current_tx_id) {
+                if !join_row.is_visible_to_snapshot(&snapshot) {
                     continue;
                 }
 
@@ -938,13 +940,13 @@ impl QueryExecutor {
         // For RIGHT JOIN, include non-matching rows from join table
         if matches!(join.join_type, JoinType::Right) {
             for join_row in &join_rows {
-                if !join_row.is_visible(current_tx_id) {
+                if !join_row.is_visible_to_snapshot(&snapshot) {
                     continue;
                 }
 
                 let join_join_value = &join_row.values[join_join_idx];
                 let matched = main_rows.iter().any(|main_row| {
-                    main_row.is_visible(current_tx_id)
+                    main_row.is_visible_to_snapshot(&snapshot)
                         && &main_row.values[main_join_idx] == join_join_value
                 });
 
@@ -985,7 +987,7 @@ impl QueryExecutor {
         left: &crate::parser::Statement,
         right: &crate::parser::Statement,
         all: bool,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // Execute both queries
@@ -1027,7 +1029,7 @@ impl QueryExecutor {
         db: &Database,
         left: &crate::parser::Statement,
         right: &crate::parser::Statement,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // Execute both queries
@@ -1069,7 +1071,7 @@ impl QueryExecutor {
         db: &Database,
         left: &crate::parser::Statement,
         right: &crate::parser::Statement,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // Execute both queries
@@ -1110,7 +1112,7 @@ impl QueryExecutor {
     fn execute_query_stmt(
         db: &Database,
         stmt: &crate::parser::Statement,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         match stmt {

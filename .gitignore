@@ -2,3 +2,4 @@
 /data
 Cargo.lock
 *.json
+tests/integration/data/

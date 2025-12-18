@@ -21,13 +21,14 @@ cargo run --release
 cargo run --example cli
 ```
 
-## Возможности (v2.0.2)
+## Возможности (v2.1.0)
 
 ### Основное
-- **SQL-запросы**: CREATE/DROP TABLE/VIEW, INSERT, SELECT, UPDATE, DELETE, SHOW TABLES
+- **SQL запросы**: CREATE/DROP TABLE/VIEW, INSERT, SELECT, UPDATE, DELETE, SHOW TABLES
+- **Multi-Connection Transaction Isolation** (v2.1.0): DML изолирован между connections
 - **MVCC (Multi-Version Concurrency Control)**: изоляция с версионированием строк (xmin/xmax)
-- **WAL (Write-Ahead Log)**: автоматическое журналирование операций с crash recovery
-- **Транзакции**: BEGIN, COMMIT, ROLLBACK с snapshot isolation
+- **WAL (Write-Ahead Log)**: автоматическое логирование операций с crash recovery
+- **Транзакции**: BEGIN, COMMIT, ROLLBACK с READ COMMITTED isolation
 - **Индексы**: B-tree и Hash индексы (одиночные и составные)
 - **VACUUM**: очистка мёртвых версий строк (MVCC cleanup)
 - **PostgreSQL Protocol** (v2.0.0): Полная совместимость с psql-клиентом
