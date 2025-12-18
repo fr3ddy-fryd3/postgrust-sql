@@ -5,7 +5,7 @@
 use crate::types::{Database, DatabaseError, Row, Value, Column, DataType};
 use crate::parser::Condition;
 use crate::storage::StorageEngine;
-use crate::transaction::TransactionManager;
+use crate::transaction::GlobalTransactionManager;
 use super::storage_adapter::RowStorage;
 use super::dispatcher_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
@@ -31,7 +31,7 @@ impl DmlExecutor {
         values: Vec<Value>,
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         indexes: &mut HashMap<String, Index>,
     ) -> Result<QueryResult, DatabaseError> {
         // Reorder values to match table schema if columns specified
@@ -203,7 +203,7 @@ impl DmlExecutor {
         all_tables: &std::collections::HashMap<String, crate::types::Table>,
         columns: &[Column],
         values: &[Value],
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<(), DatabaseError> {
         for (idx, col) in columns.iter().enumerate() {
@@ -260,7 +260,7 @@ impl DmlExecutor {
         db: &Database,
         columns: &[Column],
         values: &[Value],
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
     ) -> Result<(), DatabaseError> {
         // Legacy version - uses deprecated Table.rows directly
         for (idx, col) in columns.iter().enumerate() {
@@ -309,7 +309,7 @@ impl DmlExecutor {
         columns: &[Column],
         values: &[Value],
         storage: &S,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
     ) -> Result<(), DatabaseError> {
         let all_rows = storage.get_all()?;
         let current_tx_id = tx_manager.current_tx_id();
@@ -367,7 +367,7 @@ impl DmlExecutor {
         filter: Option<Condition>,
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         table_name: &str,
         indexes: &mut HashMap<String, Index>,
     ) -> Result<QueryResult, DatabaseError> {
@@ -487,7 +487,7 @@ impl DmlExecutor {
         filter: Option<Condition>,
         storage: &mut S,
         storage_engine: Option<&mut StorageEngine>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         table_name: &str,
         indexes: &mut HashMap<String, Index>,
     ) -> Result<QueryResult, DatabaseError> {
@@ -578,7 +578,7 @@ impl DmlExecutor {
         _columns: Option<Vec<String>>,
         _values: Vec<Value>,
         _storage_engine: Option<&mut StorageEngine>,
-        _tx_manager: &TransactionManager,
+        _tx_manager: &GlobalTransactionManager,
     ) -> Result<QueryResult, DatabaseError> {
         // TODO: This needs refactoring due to borrow checker constraints
         // For now, legacy executor continues to use direct table.rows access

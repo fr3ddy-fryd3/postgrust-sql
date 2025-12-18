@@ -5,7 +5,7 @@
 /// - Removes dead tuples from storage
 /// - Works with both Vec<Row> (legacy) and `PagedTable` storage
 use crate::core::{Database, DatabaseError};
-use crate::transaction::TransactionManager;
+use crate::transaction::GlobalTransactionManager;
 use super::dispatcher_executor::QueryResult;
 
 pub struct VacuumExecutor;
@@ -24,7 +24,7 @@ impl VacuumExecutor {
     pub fn vacuum(
         db: &mut Database,
         table_name: Option<String>,
-        tx_manager: &TransactionManager,
+        tx_manager: &GlobalTransactionManager,
         database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // Get cleanup horizon - only tuples invisible to all transactions can be removed
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn test_vacuum_removes_dead_tuples() {
         let mut db = Database::new("test".to_string());
-        let tx_manager = TransactionManager::new();
+        let tx_manager = GlobalTransactionManager::new();
         let temp_dir = tempdir().unwrap();
         let mut storage = DatabaseStorage::new(temp_dir.path().to_str().unwrap(), 32).unwrap();
 
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn test_vacuum_preserves_alive_tuples() {
         let mut db = Database::new("test".to_string());
-        let tx_manager = TransactionManager::new();
+        let tx_manager = GlobalTransactionManager::new();
         let temp_dir = tempdir().unwrap();
         let mut storage = DatabaseStorage::new(temp_dir.path().to_str().unwrap(), 32).unwrap();
 
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn test_vacuum_all_tables() {
         let mut db = Database::new("test".to_string());
-        let tx_manager = TransactionManager::new();
+        let tx_manager = GlobalTransactionManager::new();
         let temp_dir = tempdir().unwrap();
         let mut storage = DatabaseStorage::new(temp_dir.path().to_str().unwrap(), 32).unwrap();
 

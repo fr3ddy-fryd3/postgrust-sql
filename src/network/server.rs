@@ -2,7 +2,7 @@ use crate::executor::{QueryExecutor, QueryResult};
 use crate::parser::parse_statement;
 use crate::network::pg_protocol::{self, frontend, transaction_status, Message, StartupMessage};
 use crate::storage::StorageEngine;
-use crate::transaction::{Transaction, TransactionManager};
+use crate::transaction::{Transaction, GlobalTransactionManager};
 use crate::types::{DatabaseError, ServerInstance};
 use comfy_table::{Cell, Table as ComfyTable, presets::UTF8_FULL};
 use std::collections::HashMap;
@@ -38,7 +38,7 @@ impl SessionContext {
 pub struct Server {
     instance: Arc<Mutex<ServerInstance>>,
     storage: Arc<Mutex<StorageEngine>>,
-    tx_manager: TransactionManager,
+    tx_manager: GlobalTransactionManager,
     database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
 }
 
@@ -95,7 +95,7 @@ impl Server {
         // Сохраняем начальный snapshot
         storage.create_checkpoint_instance(&instance)?;
 
-        let tx_manager = TransactionManager::new();
+        let tx_manager = GlobalTransactionManager::new();
 
         // v2.0.2: Page-based storage is now mandatory (always enabled)
         let use_page_storage = std::env::var("RUSTDB_USE_PAGE_STORAGE")
@@ -158,7 +158,7 @@ impl Server {
         socket: TcpStream,
         instance: Arc<Mutex<ServerInstance>>,
         storage: Arc<Mutex<StorageEngine>>,
-        tx_manager: TransactionManager,
+        tx_manager: GlobalTransactionManager,
         database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Peek at the first 8 bytes to determine protocol
@@ -186,7 +186,7 @@ impl Server {
         socket: TcpStream,
         instance: Arc<Mutex<ServerInstance>>,
         storage: Arc<Mutex<StorageEngine>>,
-        tx_manager: TransactionManager,
+        tx_manager: GlobalTransactionManager,
         database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (mut reader, mut writer) = socket.into_split();
@@ -514,14 +514,18 @@ impl Server {
                                             if transaction.is_active() {
                                                 Message::error_response("Transaction already active").send(&mut writer).await?;
                                             } else {
-                                                let tx_id = tx_manager.begin_transaction();
-                                                transaction.begin(tx_id, db);
+                                                let (tx_id, snapshot) = tx_manager.begin_transaction();
+                                                transaction.begin(tx_id, snapshot, db);
                                                 Message::command_complete("BEGIN").send(&mut writer).await?;
                                             }
                                             Message::ready_for_query(transaction_status::IN_TRANSACTION).send(&mut writer).await?;
                                         }
                                         crate::parser::Statement::Commit => {
                                             if transaction.is_active() {
+                                                // Remove from active transactions in GlobalTransactionManager
+                                                if let Some(tx_id) = transaction.tx_id() {
+                                                    tx_manager.commit_transaction(tx_id);
+                                                }
                                                 transaction.commit();
                                                 let mut storage_guard = storage.lock().await;
                                                 if let Err(e) = storage_guard.save_server_instance(&inst) {
@@ -536,6 +540,10 @@ impl Server {
                                         }
                                         crate::parser::Statement::Rollback => {
                                             if transaction.is_active() {
+                                                // Remove from active transactions in GlobalTransactionManager
+                                                if let Some(tx_id) = transaction.tx_id() {
+                                                    tx_manager.rollback_transaction(tx_id);
+                                                }
                                                 transaction.rollback(db);
                                                 Message::command_complete("ROLLBACK").send(&mut writer).await?;
                                             } else {
@@ -642,7 +650,7 @@ impl Server {
         mut socket: TcpStream,
         instance: Arc<Mutex<ServerInstance>>,
         storage: Arc<Mutex<StorageEngine>>,
-        tx_manager: TransactionManager,
+        tx_manager: GlobalTransactionManager,
         database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (reader, mut writer) = socket.split();
@@ -697,13 +705,17 @@ impl Server {
                                 if transaction.is_active() {
                                     "Warning: Transaction already active\n".to_string()
                                 } else {
-                                    let tx_id = tx_manager.begin_transaction();
-                                    transaction.begin(tx_id, db);
+                                    let (tx_id, snapshot) = tx_manager.begin_transaction();
+                                    transaction.begin(tx_id, snapshot, db);
                                     format!("Transaction started (ID: {tx_id})\n")
                                 }
                             }
                             crate::parser::Statement::Commit => {
                                 if transaction.is_active() {
+                                    // Remove from active transactions in GlobalTransactionManager
+                                    if let Some(tx_id) = transaction.tx_id() {
+                                        tx_manager.commit_transaction(tx_id);
+                                    }
                                     transaction.commit();
                                     // Save server instance after commit
                                     let mut storage_guard = storage.lock().await;
@@ -718,6 +730,10 @@ impl Server {
                             }
                             crate::parser::Statement::Rollback => {
                                 if transaction.is_active() {
+                                    // Remove from active transactions in GlobalTransactionManager
+                                    if let Some(tx_id) = transaction.tx_id() {
+                                        tx_manager.rollback_transaction(tx_id);
+                                    }
                                     transaction.rollback(db);
                                     "Transaction rolled back\n".to_string()
                                 } else {
