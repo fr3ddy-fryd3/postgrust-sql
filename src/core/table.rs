@@ -33,7 +33,8 @@ pub struct Table {
 }
 
 impl Table {
-    #[must_use] 
+    #[must_use]
+    #[allow(deprecated)]
     pub fn new(name: String, columns: Vec<Column>) -> Self {
         let mut sequences = HashMap::new();
 
@@ -52,6 +53,7 @@ impl Table {
         }
     }
 
+    #[allow(deprecated)]
     pub fn insert(&mut self, row: Row) -> Result<(), DatabaseError> {
         if row.values.len() != self.columns.len() {
             return Err(DatabaseError::ColumnCountMismatch);

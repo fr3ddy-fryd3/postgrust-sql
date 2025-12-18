@@ -40,6 +40,7 @@ impl ExplainExecutor {
     pub fn explain(
         db: &Database,
         statement: &Statement,
+        database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         match statement {
             Statement::Select {
@@ -48,7 +49,7 @@ impl ExplainExecutor {
                 joins,
                 ..
             } => {
-                let plan = Self::analyze_select(db, from, filter)?;
+                let plan = Self::analyze_select(db, from, filter, database_storage)?;
                 let output = Self::format_plan(&plan, joins.is_empty());
                 Ok(QueryResult::Success(output))
             }
@@ -62,13 +63,16 @@ impl ExplainExecutor {
         db: &Database,
         table_name: &str,
         filter: &Option<Condition>,
+        database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryPlan, DatabaseError> {
-        // Get table
-        let table = db
+        // Validate table exists
+        let _table = db
             .get_table(table_name)
             .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
 
-        let total_rows = table.rows.len();
+        let paged_table = database_storage.get_paged_table(table_name)
+            .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
+        let total_rows = paged_table.row_count();
 
         // Check if an index can be used
         let (scan_type, index_info, cost, estimated_rows) = if let Some(cond) = filter {

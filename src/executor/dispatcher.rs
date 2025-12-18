@@ -35,7 +35,7 @@ impl QueryExecutor {
             }
             Statement::DropTable { name } => DdlExecutor::drop_table(db, name, storage),
             Statement::AlterTable { name, operation } => {
-                DdlExecutor::alter_table(db, name, operation, storage)
+                DdlExecutor::alter_table(db, name, operation, storage, database_storage)
             }
             Statement::ShowTables => DdlExecutor::show_tables(db),
 
@@ -52,6 +52,18 @@ impl QueryExecutor {
                 let table_sequences = table_ref.sequences.clone();
                 let all_tables = db.tables.clone();  // Clone to avoid borrow conflict
 
+                // Reorder values to match table schema (v2.0.0)
+                let ordered_values = DmlExecutor::reorder_values(&table_columns, columns.clone(), values.clone())?;
+
+                // Validate foreign keys BEFORE mutable borrows (v2.0.0)
+                DmlExecutor::validate_foreign_keys_with_storage(
+                    &all_tables,
+                    &table_columns,
+                    &ordered_values,
+                    tx_manager,
+                    database_storage,
+                )?;
+
                 // v2.0.0: Page-based storage only
                 let paged_table = database_storage.get_paged_table_mut(&table)
                     .ok_or_else(|| DatabaseError::TableNotFound(table.clone()))?;
@@ -66,7 +78,6 @@ impl QueryExecutor {
                     &table_columns,
                     &table_sequences,
                     sequences_mut,
-                    &all_tables,
                     &table,
                     columns,
                     values,
@@ -124,20 +135,20 @@ impl QueryExecutor {
                 offset,
             } => {
                 // v2.0.0: database_storage is always available
-                QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, Some(database_storage))
+                QueriesExecutor::select(db, distinct, columns, from, joins, filter, group_by, order_by, limit, offset, tx_manager, database_storage)
             }
             // Set operations (v1.10.0)
             Statement::Union { left, right, all } => {
-                QueriesExecutor::union(db, &left, &right, all, tx_manager, Some(database_storage))
+                QueriesExecutor::union(db, &left, &right, all, tx_manager, database_storage)
             }
             Statement::Intersect { left, right } => {
-                QueriesExecutor::intersect(db, &left, &right, tx_manager, Some(database_storage))
+                QueriesExecutor::intersect(db, &left, &right, tx_manager, database_storage)
             }
             Statement::Except { left, right } => {
-                QueriesExecutor::except(db, &left, &right, tx_manager, Some(database_storage))
+                QueriesExecutor::except(db, &left, &right, tx_manager, database_storage)
             }
             Statement::CreateIndex { name, table, columns, unique, index_type } => {
-                super::index::IndexExecutor::create_index(db, name, table, columns, unique, index_type)
+                super::index::IndexExecutor::create_index(db, name, table, columns, unique, index_type, database_storage)
             }
             Statement::DropIndex { name } => {
                 super::index::IndexExecutor::drop_index(db, name)
@@ -146,7 +157,7 @@ impl QueryExecutor {
                 super::vacuum::VacuumExecutor::vacuum(db, table, tx_manager, database_storage)
             }
             Statement::Explain { statement } => {
-                let result = super::explain::ExplainExecutor::explain(db, &statement)?;
+                let result = super::explain::ExplainExecutor::explain(db, &statement, database_storage)?;
                 // Convert explain::QueryResult to legacy::QueryResult
                 match result {
                     super::explain::QueryResult::Success(msg) => Ok(QueryResult::Success(msg)),
@@ -257,6 +268,20 @@ mod tests {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
         let temp_dir = std::env::temp_dir().join(format!("rustdb_test_{}_{}", std::process::id(), nanos));
         crate::storage::DatabaseStorage::new(temp_dir, 100).unwrap() // 100 pages buffer
+    }
+
+    fn setup_test_table_with_data(
+        db: &mut Database,
+        storage: &mut crate::storage::DatabaseStorage,
+        rows: Vec<Row>,
+    ) {
+        let table = create_test_table();
+        db.create_table(table).unwrap();
+        storage.create_table("users".to_string()).unwrap();
+        let paged_table = storage.get_paged_table_mut("users").unwrap();
+        for row in rows {
+            paged_table.insert(row).unwrap();
+        }
     }
 
     /// v2.0.0: Helper - setup test table via executor (creates in both DB and Storage)
@@ -1003,29 +1028,12 @@ mod tests {
     #[test]
     fn test_aggregate_count_all() {
         let mut db = Database::new("test".to_string());
-        let mut table = create_test_table();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Alice".to_string()),
-                Value::Integer(30),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Bob".to_string()),
-                Value::Integer(25),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Charlie".to_string()),
-                Value::Integer(35),
-            ]))
-            .unwrap();
-        db.create_table(table).unwrap();
+        let mut storage = create_test_storage();
+        setup_test_table_with_data(&mut db, &mut storage, vec![
+            Row::new(vec![Value::Integer(1), Value::Text("Alice".to_string()), Value::Integer(30)]),
+            Row::new(vec![Value::Integer(2), Value::Text("Bob".to_string()), Value::Integer(25)]),
+            Row::new(vec![Value::Integer(3), Value::Text("Charlie".to_string()), Value::Integer(35)]),
+        ]);
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1042,7 +1050,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1055,29 +1063,12 @@ mod tests {
     #[test]
     fn test_aggregate_sum() {
         let mut db = Database::new("test".to_string());
-        let mut table = create_test_table();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Alice".to_string()),
-                Value::Integer(30),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Bob".to_string()),
-                Value::Integer(25),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Charlie".to_string()),
-                Value::Integer(35),
-            ]))
-            .unwrap();
-        db.create_table(table).unwrap();
+        let mut storage = create_test_storage();
+        setup_test_table_with_data(&mut db, &mut storage, vec![
+            Row::new(vec![Value::Integer(1), Value::Text("Alice".to_string()), Value::Integer(30)]),
+            Row::new(vec![Value::Integer(2), Value::Text("Bob".to_string()), Value::Integer(25)]),
+            Row::new(vec![Value::Integer(3), Value::Text("Charlie".to_string()), Value::Integer(35)]),
+        ]);
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1094,7 +1085,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1107,29 +1098,12 @@ mod tests {
     #[test]
     fn test_aggregate_avg() {
         let mut db = Database::new("test".to_string());
-        let mut table = create_test_table();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Alice".to_string()),
-                Value::Integer(30),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Bob".to_string()),
-                Value::Integer(20),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Charlie".to_string()),
-                Value::Integer(40),
-            ]))
-            .unwrap();
-        db.create_table(table).unwrap();
+        let mut storage = create_test_storage();
+        setup_test_table_with_data(&mut db, &mut storage, vec![
+            Row::new(vec![Value::Integer(1), Value::Text("Alice".to_string()), Value::Integer(30)]),
+            Row::new(vec![Value::Integer(2), Value::Text("Bob".to_string()), Value::Integer(20)]),
+            Row::new(vec![Value::Integer(3), Value::Text("Charlie".to_string()), Value::Integer(40)]),
+        ]);
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1146,7 +1120,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1159,29 +1133,12 @@ mod tests {
     #[test]
     fn test_aggregate_min() {
         let mut db = Database::new("test".to_string());
-        let mut table = create_test_table();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Alice".to_string()),
-                Value::Integer(30),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Bob".to_string()),
-                Value::Integer(25),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Charlie".to_string()),
-                Value::Integer(35),
-            ]))
-            .unwrap();
-        db.create_table(table).unwrap();
+        let mut storage = create_test_storage();
+        setup_test_table_with_data(&mut db, &mut storage, vec![
+            Row::new(vec![Value::Integer(1), Value::Text("Alice".to_string()), Value::Integer(30)]),
+            Row::new(vec![Value::Integer(2), Value::Text("Bob".to_string()), Value::Integer(25)]),
+            Row::new(vec![Value::Integer(3), Value::Text("Charlie".to_string()), Value::Integer(35)]),
+        ]);
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1198,7 +1155,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1211,29 +1168,12 @@ mod tests {
     #[test]
     fn test_aggregate_max() {
         let mut db = Database::new("test".to_string());
-        let mut table = create_test_table();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Alice".to_string()),
-                Value::Integer(30),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Bob".to_string()),
-                Value::Integer(25),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Charlie".to_string()),
-                Value::Integer(35),
-            ]))
-            .unwrap();
-        db.create_table(table).unwrap();
+        let mut storage = create_test_storage();
+        setup_test_table_with_data(&mut db, &mut storage, vec![
+            Row::new(vec![Value::Integer(1), Value::Text("Alice".to_string()), Value::Integer(30)]),
+            Row::new(vec![Value::Integer(2), Value::Text("Bob".to_string()), Value::Integer(25)]),
+            Row::new(vec![Value::Integer(3), Value::Text("Charlie".to_string()), Value::Integer(35)]),
+        ]);
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1250,7 +1190,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1263,29 +1203,12 @@ mod tests {
     #[test]
     fn test_aggregate_with_where() {
         let mut db = Database::new("test".to_string());
-        let mut table = create_test_table();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Alice".to_string()),
-                Value::Integer(30),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Bob".to_string()),
-                Value::Integer(25),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Charlie".to_string()),
-                Value::Integer(35),
-            ]))
-            .unwrap();
-        db.create_table(table).unwrap();
+        let mut storage = create_test_storage();
+        setup_test_table_with_data(&mut db, &mut storage, vec![
+            Row::new(vec![Value::Integer(1), Value::Text("Alice".to_string()), Value::Integer(30)]),
+            Row::new(vec![Value::Integer(2), Value::Text("Bob".to_string()), Value::Integer(25)]),
+            Row::new(vec![Value::Integer(3), Value::Text("Charlie".to_string()), Value::Integer(35)]),
+        ]);
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1305,7 +1228,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1);
@@ -1318,7 +1241,9 @@ mod tests {
     #[test]
     fn test_group_by_with_count() {
         let mut db = Database::new("test".to_string());
-        let mut table = Table::new(
+        let mut storage = create_test_storage();
+
+        let table = Table::new(
             "products".to_string(),
             vec![
                 Column {
@@ -1326,7 +1251,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -1334,7 +1259,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -1342,33 +1267,29 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
             ],
         );
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Electronics".to_string()),
-                Value::Integer(1000),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Electronics".to_string()),
-                Value::Integer(500),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Books".to_string()),
-                Value::Integer(20),
-            ]))
-            .unwrap();
         db.create_table(table).unwrap();
+        storage.create_table("products".to_string()).unwrap();
+        let paged_table = storage.get_paged_table_mut("products").unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(1),
+            Value::Text("Electronics".to_string()),
+            Value::Integer(1000),
+        ])).unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(2),
+            Value::Text("Electronics".to_string()),
+            Value::Integer(500),
+        ])).unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(3),
+            Value::Text("Books".to_string()),
+            Value::Integer(20),
+        ])).unwrap();
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1388,7 +1309,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns, vec!["category", "count"]);
@@ -1410,7 +1331,9 @@ mod tests {
     #[test]
     fn test_group_by_with_sum() {
         let mut db = Database::new("test".to_string());
-        let mut table = Table::new(
+        let mut storage = create_test_storage();
+
+        let table = Table::new(
             "products".to_string(),
             vec![
                 Column {
@@ -1418,7 +1341,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -1426,7 +1349,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -1434,33 +1357,29 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
             ],
         );
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Electronics".to_string()),
-                Value::Integer(1000),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Electronics".to_string()),
-                Value::Integer(500),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Books".to_string()),
-                Value::Integer(20),
-            ]))
-            .unwrap();
         db.create_table(table).unwrap();
+        storage.create_table("products".to_string()).unwrap();
+        let paged_table = storage.get_paged_table_mut("products").unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(1),
+            Value::Text("Electronics".to_string()),
+            Value::Integer(1000),
+        ])).unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(2),
+            Value::Text("Electronics".to_string()),
+            Value::Integer(500),
+        ])).unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(3),
+            Value::Text("Books".to_string()),
+            Value::Integer(20),
+        ])).unwrap();
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1480,7 +1399,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, columns) => {
                 assert_eq!(columns, vec!["category", "sum(price)"]);
@@ -1502,7 +1421,9 @@ mod tests {
     #[test]
     fn test_group_by_without_grouped_column_error() {
         let mut db = Database::new("test".to_string());
-        let mut table = Table::new(
+        let mut storage = create_test_storage();
+
+        let table = Table::new(
             "products".to_string(),
             vec![
                 Column {
@@ -1510,7 +1431,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -1518,7 +1439,7 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 Column {
@@ -1526,19 +1447,19 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
             ],
         );
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Electronics".to_string()),
-                Value::Integer(1000),
-            ]))
-            .unwrap();
         db.create_table(table).unwrap();
+        storage.create_table("products".to_string()).unwrap();
+        let paged_table = storage.get_paged_table_mut("products").unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(1),
+            Value::Text("Electronics".to_string()),
+            Value::Integer(1000),
+        ])).unwrap();
 
         // Try to select 'price' without including it in GROUP BY
         let stmt = Statement::Select {
@@ -1557,7 +1478,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage());
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1568,7 +1489,9 @@ mod tests {
     #[test]
     fn test_group_by_with_where() {
         let mut db = Database::new("test".to_string());
-        let mut table = Table::new(
+        let mut storage = create_test_storage();
+
+        let table = Table::new(
             "products".to_string(),
             vec![
                 Column {
@@ -1597,35 +1520,29 @@ mod tests {
                 },
             ],
         );
-        table
-            .insert(Row::new(vec![
-                Value::Integer(1),
-                Value::Text("Electronics".to_string()),
-                Value::Integer(1000),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(2),
-                Value::Text("Electronics".to_string()),
-                Value::Integer(500),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(3),
-                Value::Text("Books".to_string()),
-                Value::Integer(20),
-            ]))
-            .unwrap();
-        table
-            .insert(Row::new(vec![
-                Value::Integer(4),
-                Value::Text("Books".to_string()),
-                Value::Integer(15),
-            ]))
-            .unwrap();
         db.create_table(table).unwrap();
+        storage.create_table("products".to_string()).unwrap();
+        let paged_table = storage.get_paged_table_mut("products").unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(1),
+            Value::Text("Electronics".to_string()),
+            Value::Integer(1000),
+        ])).unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(2),
+            Value::Text("Electronics".to_string()),
+            Value::Integer(500),
+        ])).unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(3),
+            Value::Text("Books".to_string()),
+            Value::Integer(20),
+        ])).unwrap();
+        paged_table.insert(Row::new(vec![
+            Value::Integer(4),
+            Value::Text("Books".to_string()),
+            Value::Integer(15),
+        ])).unwrap();
 
         let stmt = Statement::Select {
                 distinct: false,
@@ -1648,7 +1565,7 @@ mod tests {
         };
 
         let tx_manager = TransactionManager::new();
-        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut create_test_storage()).unwrap();
+        let result = QueryExecutor::execute(&mut db, stmt, None, &tx_manager, &mut storage).unwrap();
         match result {
             QueryResult::Rows(rows, _) => {
                 assert_eq!(rows.len(), 1); // Only Electronics has items > 25

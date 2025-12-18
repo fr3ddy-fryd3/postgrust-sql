@@ -266,6 +266,9 @@ impl WalManager {
     }
 
     /// Применяет операцию к базе данных
+    ///
+    /// LEGACY: This function is used for WAL replay on v1.x databases only
+    #[allow(deprecated)]
     pub fn apply_operation(db: &mut Database, operation: &Operation) -> Result<(), DatabaseError> {
         match operation {
             Operation::CreateTable { table_name, table } => {

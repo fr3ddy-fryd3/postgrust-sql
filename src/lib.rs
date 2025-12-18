@@ -1,6 +1,32 @@
 // PostgrustSQL - PostgreSQL-compatible database in Rust
 // Modular architecture for maintainability and extensibility
 
+// Clippy configuration - allow non-critical warnings for pet project
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::manual_let_else)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::unnecessary_wraps)]
+#![allow(clippy::format_push_string)]
+#![allow(clippy::wildcard_enum_match_arm)]
+#![allow(clippy::inefficient_to_string)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::ref_option_ref)]
+#![allow(clippy::drop_non_drop)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::mut_from_ref)]
+
 // Core database structures
 pub mod core;
 

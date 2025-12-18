@@ -132,15 +132,16 @@ impl DdlExecutor {
         table_name: String,
         operation: AlterTableOperation,
         storage: Option<&mut StorageEngine>,
+        database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         use AlterTableOperation::{AddColumn, DropColumn, RenameColumn, RenameTable};
 
         match operation {
             AddColumn(column_def) => {
-                Self::alter_table_add_column(db, &table_name, column_def, storage)
+                Self::alter_table_add_column(db, &table_name, column_def, storage, database_storage)
             }
             DropColumn(column_name) => {
-                Self::alter_table_drop_column(db, &table_name, column_name, storage)
+                Self::alter_table_drop_column(db, &table_name, column_name, storage, database_storage)
             }
             RenameColumn { old_name, new_name } => {
                 Self::alter_table_rename_column(db, &table_name, old_name, new_name, storage)
@@ -157,6 +158,7 @@ impl DdlExecutor {
         table_name: &str,
         column_def: ColumnDef,
         storage: Option<&mut StorageEngine>,
+        database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // First, do all validations (immutable borrows)
         {
@@ -228,11 +230,20 @@ impl DdlExecutor {
         // Add column to schema
         table.columns.push(new_column);
 
-        // Add NULL value to all existing rows
+        // Add NULL value to all existing rows in PagedTable (v2.0.0)
         use crate::types::Value;
-        for row in &mut table.rows {
-            row.values.push(Value::Null);
-        }
+        let paged_table = database_storage.get_paged_table_mut(table_name)
+            .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
+        // Update all rows (predicate always true)
+        paged_table.update_where(
+            |_row| true,  // Match all rows
+            |row| {
+                let mut new_row = row.clone();
+                new_row.values.push(Value::Null);
+                new_row
+            },
+            0,  // No tx_id needed for schema changes
+        )?;
 
         Ok(QueryResult::Success(format!(
             "Column '{}' added to table '{}'",
@@ -246,6 +257,7 @@ impl DdlExecutor {
         table_name: &str,
         column_name: String,
         storage: Option<&mut StorageEngine>,
+        database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db.get_table_mut(table_name)
             .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
@@ -271,10 +283,19 @@ impl DdlExecutor {
         // Remove column from schema
         table.columns.remove(col_idx);
 
-        // Remove value from all rows
-        for row in &mut table.rows {
-            row.values.remove(col_idx);
-        }
+        // Remove value from all rows in PagedTable (v2.0.0)
+        let paged_table = database_storage.get_paged_table_mut(table_name)
+            .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
+        // Update all rows (predicate always true)
+        paged_table.update_where(
+            |_row| true,  // Match all rows
+            |row| {
+                let mut new_row = row.clone();
+                new_row.values.remove(col_idx);
+                new_row
+            },
+            0,  // No tx_id needed for schema changes
+        )?;
 
         Ok(QueryResult::Success(format!(
             "Column '{column_name}' dropped from table '{table_name}'"

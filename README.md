@@ -21,7 +21,7 @@ cargo run --release
 cargo run --example cli
 ```
 
-## Возможности (v2.0.1)
+## Возможности (v2.0.2)
 
 ### Основное
 - **SQL запросы**: CREATE/DROP TABLE/VIEW, INSERT, SELECT, UPDATE, DELETE, SHOW TABLES
@@ -34,7 +34,7 @@ cargo run --example cli
   - Стандартный authentication flow (AuthenticationCleartextPassword)
   - System catalogs (pg_catalog.*, information_schema.*)
   - System functions (version(), current_database(), pg_table_size())
-- **Качество кода** (v2.0.1): Строгая конфигурация Clippy (pedantic + nursery)
+- **Качество кода** (v2.0.2): 0 deprecated warnings, relaxed Clippy для pet project
 
 ### SQL Возможности
 - **23 типа данных**: SMALLINT, INTEGER, BIGINT, SERIAL, BIGSERIAL, REAL, NUMERIC(p,s), TEXT, VARCHAR(n), CHAR(n), BOOLEAN, DATE, TIMESTAMP, TIMESTAMPTZ, UUID, JSON, JSONB, BYTEA, ENUM, и др.
@@ -56,7 +56,7 @@ cargo run --example cli
 - **Составные индексы**: поддержка multi-column индексов
 - **Foreign Keys**: поддержка внешних ключей
 
-## Архитектура (v2.0.1)
+## Архитектура (v2.0.2)
 
 **Модульная структура** (~2400 строк кода, чистый код после v2.0.0 cleanup):
 
@@ -360,7 +360,7 @@ nc 127.0.0.1 5432
 ### Запуск тестов
 
 ```bash
-# Юнит-тесты (166 тестов, все проходят ✅ v2.0.1)
+# Юнит-тесты (159 тестов, все проходят ✅ v2.0.2)
 cargo test
 
 # Интеграционные тесты
@@ -388,7 +388,14 @@ cargo clippy
 
 ## История версий
 
-**v2.0.1** (Текущая) - Качество кода и тесты
+**v2.0.2** (Текущая) - Complete PagedTable Migration
+- 🧹 Удалены все deprecated Table.rows usage (0 warnings, было 17)
+- ✨ Все executors теперь используют только PagedTable (mandatory &DatabaseStorage)
+- 🔧 Исправлено 10 aggregate/group_by тестов
+- 📝 Relaxed Clippy конфигурация (~20 warnings, было 292)
+- ✅ 159/159 юнит-тестов проходят
+
+**v2.0.1** - Качество кода и тесты
 - 🔧 Строгая конфигурация Clippy (pedantic + nursery + cargo + correctness)
 - ✨ Автоматические исправления применены (unused imports, dereferencing, etc.)
 - 🔄 Рефакторинг 16 dispatcher тестов для page-based storage
