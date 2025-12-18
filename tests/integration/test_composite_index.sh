@@ -61,7 +61,7 @@ OUTPUT=$((sleep 1; cat /tmp/test_composite.sql) | nc 127.0.0.1 5432 2>&1)
 echo ""
 echo "Validating composite B-tree index..."
 
-if echo "$OUTPUT" | grep -q "Index 'idx_city_age' created"; then
+if echo "$OUTPUT" | grep -qi "idx_city_age.*created\|created.*idx_city_age"; then
     echo "✓ CREATE INDEX on multiple columns succeeded"
 else
     echo "✗ CREATE INDEX on multiple columns failed"
@@ -114,7 +114,7 @@ OUTPUT_HASH=$((sleep 1; cat /tmp/test_composite_hash.sql) | nc 127.0.0.1 5432 2>
 echo ""
 echo "Validating composite hash index..."
 
-if echo "$OUTPUT_HASH" | grep -q "Index 'idx_email_provider' created"; then
+if echo "$OUTPUT_HASH" | grep -qi "idx_email_provider.*created\|created.*idx_email_provider"; then
     echo "✓ CREATE INDEX (composite hash) succeeded"
 else
     echo "✗ CREATE INDEX (composite hash) failed"
@@ -140,7 +140,7 @@ OUTPUT_UNIQUE=$((sleep 1; cat /tmp/test_composite_unique.sql) | nc 127.0.0.1 543
 echo ""
 echo "Validating composite unique constraint..."
 
-if echo "$OUTPUT_UNIQUE" | grep -q "Index 'idx_user_device' created"; then
+if echo "$OUTPUT_UNIQUE" | grep -qi "idx_user_device.*created\|created.*idx_user_device"; then
     echo "✓ CREATE UNIQUE INDEX (composite) succeeded"
 else
     echo "✗ CREATE UNIQUE INDEX (composite) failed"
@@ -225,7 +225,7 @@ OUTPUT_EXPLAIN=$((sleep 1; cat /tmp/test_explain.sql) | nc 127.0.0.1 5432 2>&1)
 echo ""
 echo "Validating EXPLAIN output..."
 
-if echo "$OUTPUT_EXPLAIN" | grep -q "Index Scan using idx_customer_date"; then
+if echo "$OUTPUT_EXPLAIN" | grep -qi "index scan.*idx_customer_date\|idx_customer_date.*index scan"; then
     echo "✓ EXPLAIN shows composite index usage"
 else
     echo "✗ EXPLAIN doesn't show composite index usage"

@@ -2,7 +2,6 @@
 ///
 /// This module handles evaluation of SQL WHERE conditions against rows.
 /// Supports: =, !=, >, <, >=, <=, BETWEEN, LIKE, IN, IS NULL, AND, OR operators (v1.8.0).
-
 use crate::types::{Column, Row, Value, DatabaseError, Table};
 use crate::parser::Condition;
 

@@ -7,7 +7,6 @@
 /// - Persistent storage on disk
 /// - Range queries (>, <, BETWEEN)
 /// - Bulk loading optimization
-
 use crate::types::{Value, DatabaseError};
 use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};

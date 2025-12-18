@@ -2,7 +2,6 @@
 ///
 /// Implements B-tree and Hash indexes.
 /// Future: bitmap indexes, `GiST`, GIN, etc.
-
 pub mod btree;
 pub mod hash;
 

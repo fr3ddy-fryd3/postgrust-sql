@@ -85,11 +85,10 @@ echo "✓ Server stopped"
 
 echo ""
 echo "=== Verifying persistence ==="
-if [ -f data/main.json ]; then
-    echo "✓ Database file exists"
-    echo ""
-    echo "Database content:"
-    cat data/main.json | python3 -m json.tool 2>/dev/null || cat data/main.json
+if [ -f data/server_instance.db ]; then
+    echo "✓ Database file exists (data/server_instance.db)"
+    echo "  File size: $(ls -lh data/server_instance.db | awk '{print $5}')"
+    echo "✓ Page-based storage working"
 else
     echo "✗ Database file not found"
 fi

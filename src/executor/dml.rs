@@ -2,7 +2,6 @@
 ///
 /// INSERT, UPDATE, DELETE using `RowStorage` abstraction.
 /// This allows seamless operation with both Vec<Row> and `PagedTable`.
-
 use crate::types::{Database, DatabaseError, Row, Value, Column, DataType};
 use crate::parser::Condition;
 use crate::storage::StorageEngine;
@@ -27,7 +26,6 @@ impl DmlExecutor {
         table_columns: &[Column],
         table_sequences: &std::collections::HashMap<String, i64>,
         sequences_mut: &mut std::collections::HashMap<String, i64>,
-        all_tables: &std::collections::HashMap<String, crate::types::Table>,
         table_name: &str,
         columns: Option<Vec<String>>,
         values: Vec<Value>,
@@ -45,8 +43,7 @@ impl DmlExecutor {
         // Validate types, VARCHAR lengths, CHAR padding, ENUM values
         Self::validate_and_coerce_types(table_columns, &mut ordered_values)?;
 
-        // Validate foreign key constraints
-        Self::validate_foreign_keys_with_tables(all_tables, table_columns, &ordered_values, tx_manager)?;
+        // Note: Foreign key validation moved to dispatcher (before mutable borrows)
 
         // Validate UNIQUE constraints
         Self::validate_unique_constraints(table_columns, &ordered_values, storage, tx_manager)?;
@@ -103,7 +100,8 @@ impl DmlExecutor {
     }
 
     /// Reorder values to match table schema when columns are specified
-    fn reorder_values(
+    /// Public so it can be called from dispatcher for validation
+    pub fn reorder_values(
         table_columns: &[Column],
         columns: Option<Vec<String>>,
         values: Vec<Value>,
@@ -200,11 +198,13 @@ impl DmlExecutor {
     /// Validate foreign key constraints (using `HashMap`<String, Table>)
     ///
     /// Borrow-checker friendly version that accepts `all_tables` instead of &Database
-    fn validate_foreign_keys_with_tables(
+    /// Public so it can be called from dispatcher before mutable borrows
+    pub fn validate_foreign_keys_with_storage(
         all_tables: &std::collections::HashMap<String, crate::types::Table>,
         columns: &[Column],
         values: &[Value],
         tx_manager: &TransactionManager,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<(), DatabaseError> {
         for (idx, col) in columns.iter().enumerate() {
             if let Some(ref fk) = col.foreign_key {
@@ -233,8 +233,13 @@ impl DmlExecutor {
                         format!("Referenced column '{}' not found", fk.referenced_column)
                     ))?;
 
+                // Get rows from PagedTable (v2.0.0)
+                let paged_table = database_storage.get_paged_table(&fk.referenced_table)
+                    .ok_or_else(|| DatabaseError::TableNotFound(fk.referenced_table.clone()))?;
+                let ref_rows = paged_table.get_all_rows()?;
+
                 let current_tx_id = tx_manager.current_tx_id();
-                let exists = ref_table.rows.iter()
+                let exists = ref_rows.iter()
                     .any(|row| row.is_visible(current_tx_id) && &row.values[ref_col_idx] == value);
 
                 if !exists {
@@ -250,13 +255,53 @@ impl DmlExecutor {
 
     /// Validate foreign key constraints (legacy version using &Database)
     #[allow(dead_code)]
+    #[allow(deprecated)]
     fn validate_foreign_keys(
         db: &Database,
         columns: &[Column],
         values: &[Value],
         tx_manager: &TransactionManager,
     ) -> Result<(), DatabaseError> {
-        Self::validate_foreign_keys_with_tables(&db.tables, columns, values, tx_manager)
+        // Legacy version - uses deprecated Table.rows directly
+        for (idx, col) in columns.iter().enumerate() {
+            if let Some(ref fk) = col.foreign_key {
+                let value = &values[idx];
+
+                // NULL values are allowed unless column is NOT NULL
+                if matches!(value, Value::Null) {
+                    if !col.nullable {
+                        return Err(DatabaseError::ForeignKeyViolation(
+                            format!("Column '{}' cannot be NULL", col.name)
+                        ));
+                    }
+                    continue;
+                }
+
+                // Check if value exists in referenced table
+                let ref_table = db.tables.get(&fk.referenced_table)
+                    .ok_or_else(|| DatabaseError::ForeignKeyViolation(
+                        format!("Referenced table '{}' does not exist", fk.referenced_table)
+                    ))?;
+
+                let ref_col_idx = ref_table
+                    .get_column_index(&fk.referenced_column)
+                    .ok_or_else(|| DatabaseError::ForeignKeyViolation(
+                        format!("Referenced column '{}' not found", fk.referenced_column)
+                    ))?;
+
+                let current_tx_id = tx_manager.current_tx_id();
+                let exists = ref_table.rows.iter()
+                    .any(|row| row.is_visible(current_tx_id) && &row.values[ref_col_idx] == value);
+
+                if !exists {
+                    return Err(DatabaseError::ForeignKeyViolation(
+                        format!("Foreign key constraint violation: value {:?} not found in {}.{}",
+                                value, fk.referenced_table, fk.referenced_column)
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Validate UNIQUE constraints using `RowStorage`
@@ -544,7 +589,7 @@ impl DmlExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Table, Column, DataType};
+    use crate::types::{Column, DataType};
 
     #[test]
     fn test_reorder_values() {

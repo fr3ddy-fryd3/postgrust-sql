@@ -1,7 +1,6 @@
 /// Query (SELECT) operations
 ///
 /// SELECT, JOIN, aggregate functions, GROUP BY
-
 use crate::types::{Database, DatabaseError, Row, Table, Value};
 use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression};
 use crate::transaction::TransactionManager;
@@ -135,7 +134,7 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
-        database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // v2.0.0: Check if 'from' is a system catalog
         if super::system_catalogs::SystemCatalog::is_system_catalog(&from) {
@@ -223,7 +222,7 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
-        database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db
             .get_table(&from)
@@ -276,22 +275,11 @@ impl QueryExecutor {
         // Try to use index if available
         let use_index = Self::find_usable_index(db, &from, &filter);
 
-        // Get rows from appropriate storage backend
-        let rows_vec: Vec<Row>;
-        let rows_iter: Box<dyn Iterator<Item = &Row>>;
-
-        if let Some(db_storage) = database_storage {
-            // Page-based storage: read from PagedTable
-            if let Some(paged_table) = db_storage.get_paged_table(&from) {
-                rows_vec = paged_table.get_all_rows()?;
-                rows_iter = Box::new(rows_vec.iter());
-            } else {
-                return Err(DatabaseError::TableNotFound(from.clone()));
-            }
-        } else {
-            // Legacy storage: read from table.rows
-            rows_iter = Box::new(table.rows.iter());
-        }
+        // Get rows from PagedTable (v2.0.0)
+        let paged_table = database_storage.get_paged_table(&from)
+            .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+        let rows_vec = paged_table.get_all_rows()?;
+        let rows_iter: Box<dyn Iterator<Item = &Row>> = Box::new(rows_vec.iter());
 
         // Collect rows with their original indices (for sorting)
         let mut rows_with_data: Vec<(Row, Vec<String>)> = Vec::new();
@@ -309,15 +297,9 @@ impl QueryExecutor {
             };
 
             // Get all rows first (needed to access by index)
-            let all_rows: Vec<Row> = if let Some(db_storage) = database_storage {
-                if let Some(paged_table) = db_storage.get_paged_table(&from) {
-                    paged_table.get_all_rows()?
-                } else {
-                    return Err(DatabaseError::TableNotFound(from.clone()));
-                }
-            } else {
-                table.rows.clone()
-            };
+            let paged_table = database_storage.get_paged_table(&from)
+                .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+            let all_rows = paged_table.get_all_rows()?;
 
             for &row_idx in &row_indices {
                 if row_idx >= all_rows.len() {
@@ -452,7 +434,7 @@ impl QueryExecutor {
         from: String,
         filter: Option<Condition>,
         tx_manager: &TransactionManager,
-        _database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         let table = db
             .get_table(&from)
@@ -461,9 +443,13 @@ impl QueryExecutor {
         // Get current transaction ID for visibility checks (MVCC)
         let current_tx_id = tx_manager.current_tx_id();
 
+        // Get rows from PagedTable
+        let paged_table = database_storage.get_paged_table(&from)
+            .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+        let rows_vec = paged_table.get_all_rows()?;
+
         // Collect visible rows that match the filter
-        let visible_rows: Vec<&Row> = table
-            .rows
+        let visible_rows: Vec<&Row> = rows_vec
             .iter()
             .filter(|row| {
                 // MVCC: Check row visibility
@@ -666,7 +652,7 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
-        _database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         use std::collections::HashMap;
 
@@ -689,9 +675,13 @@ impl QueryExecutor {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Get rows from PagedTable
+        let paged_table = database_storage.get_paged_table(&from)
+            .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+        let rows_vec = paged_table.get_all_rows()?;
+
         // Filter visible rows
-        let visible_rows: Vec<&Row> = table
-            .rows
+        let visible_rows: Vec<&Row> = rows_vec
             .iter()
             .filter(|row| {
                 if !row.is_visible(current_tx_id) {
@@ -830,7 +820,7 @@ impl QueryExecutor {
         limit: Option<usize>,
         offset: Option<usize>,
         tx_manager: &TransactionManager,
-        _database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         use crate::parser::JoinType;
 
@@ -854,6 +844,15 @@ impl QueryExecutor {
         let join_table = db
             .get_table(&join.table)
             .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
+
+        // Get rows from PagedTable (v2.0.0)
+        let main_paged_table = database_storage.get_paged_table(&from)
+            .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
+        let main_rows = main_paged_table.get_all_rows()?;
+
+        let join_paged_table = database_storage.get_paged_table(&join.table)
+            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
+        let join_rows = join_paged_table.get_all_rows()?;
 
         // Parse column references (table.column)
         let parse_col_ref = |ref_str: &str| -> Result<(String, String), DatabaseError> {
@@ -896,7 +895,7 @@ impl QueryExecutor {
         // Perform the join
         let mut result_rows = Vec::new();
 
-        for main_row in &main_table.rows {
+        for main_row in &main_rows {
             if !main_row.is_visible(current_tx_id) {
                 continue;
             }
@@ -904,7 +903,7 @@ impl QueryExecutor {
             let main_join_value = &main_row.values[main_join_idx];
             let mut matched = false;
 
-            for join_row in &join_table.rows {
+            for join_row in &join_rows {
                 if !join_row.is_visible(current_tx_id) {
                     continue;
                 }
@@ -938,13 +937,13 @@ impl QueryExecutor {
 
         // For RIGHT JOIN, include non-matching rows from join table
         if matches!(join.join_type, JoinType::Right) {
-            for join_row in &join_table.rows {
+            for join_row in &join_rows {
                 if !join_row.is_visible(current_tx_id) {
                     continue;
                 }
 
                 let join_join_value = &join_row.values[join_join_idx];
-                let matched = main_table.rows.iter().any(|main_row| {
+                let matched = main_rows.iter().any(|main_row| {
                     main_row.is_visible(current_tx_id)
                         && &main_row.values[main_join_idx] == join_join_value
                 });
@@ -987,7 +986,7 @@ impl QueryExecutor {
         right: &crate::parser::Statement,
         all: bool,
         tx_manager: &TransactionManager,
-        database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // Execute both queries
         let left_result = Self::execute_query_stmt(db, left, tx_manager, database_storage)?;
@@ -1029,7 +1028,7 @@ impl QueryExecutor {
         left: &crate::parser::Statement,
         right: &crate::parser::Statement,
         tx_manager: &TransactionManager,
-        database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // Execute both queries
         let left_result = Self::execute_query_stmt(db, left, tx_manager, database_storage)?;
@@ -1071,7 +1070,7 @@ impl QueryExecutor {
         left: &crate::parser::Statement,
         right: &crate::parser::Statement,
         tx_manager: &TransactionManager,
-        database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         // Execute both queries
         let left_result = Self::execute_query_stmt(db, left, tx_manager, database_storage)?;
@@ -1112,7 +1111,7 @@ impl QueryExecutor {
         db: &Database,
         stmt: &crate::parser::Statement,
         tx_manager: &TransactionManager,
-        database_storage: Option<&crate::storage::DatabaseStorage>,
+        database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
         match stmt {
             crate::parser::Statement::Select { distinct, columns, from, joins, filter, group_by, order_by, limit, offset } => {

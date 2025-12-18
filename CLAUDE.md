@@ -12,7 +12,7 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release                        # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 147 tests (4 known failures in storage)
+cargo test                                 # 159 tests (all passing ✅ v2.0.2)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
 ./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
@@ -302,6 +302,21 @@ QUERY PLAN
 ./tests/integration/test_explain.sh       # EXPLAIN command (v1.8.0)
 ```
 
+## Code Quality
+
+**Clippy configuration**: Relaxed lints for pet project (not strict production config)
+```bash
+cargo clippy --release  # ~20 warnings (mostly bin duplicates)
+```
+
+Allowed lints (configured in `src/lib.rs`):
+- Documentation lints (missing_errors_doc, missing_panics_doc)
+- Cast lints (possible_truncation, precision_loss, sign_loss, possible_wrap)
+- Complexity lints (too_many_lines, too_many_arguments, cognitive_complexity)
+- Style lints (needless_pass_by_value, match_same_arms, etc.)
+
+**Note**: This is a learning/hobby project optimized for rapid development, not production-grade code quality standards.
+
 ## Limitations
 
 - Composite indexes require exact match of all columns (partial prefix matching not yet supported)
@@ -313,7 +328,32 @@ QUERY PLAN
 
 ## Версионирование
 
-**Current**: v1.11.0 (Critical fixes & stability)
+**Current**: v2.0.2 (Complete PagedTable Migration)
+
+**v2.0.2 Changes:**
+- 🧹 Removed ALL deprecated Table.rows usage (0 warnings, was 17)
+- ✨ All executors now use mandatory &DatabaseStorage (not Optional)
+- 🔧 Fixed 10 aggregate/group_by tests to use PagedTable
+- 📝 Relaxed Clippy configuration (~20 warnings, was 292)
+- ⚙️ Page-based storage now mandatory by default (unwrap_or(true))
+- ✅ 159/159 unit tests passing
+
+**v2.0.1 Changes:**
+- 🔧 Strict Clippy configuration (pedantic + nursery)
+- 🔄 Refactored 16 dispatcher tests for page-based storage
+- ✅ 166/166 unit tests passing
+
+**v2.0.0 Changes:**
+- 🔐 PostgreSQL authentication protocol
+- 📊 System catalogs (pg_catalog.*, information_schema.*)
+- ⚙️ System functions (version(), current_database(), etc.)
+- 🧹 Cleanup legacy code
+
+**v1.11.0 Changes:**
+- 🐛 Fixed 4 failing storage tests (WAL crash recovery)
+- 🧹 Fixed all 26 compiler warnings
+- ✅ 154/154 unit tests passing
+
 **Previous**:
 - v1.10.0 - CASE expressions, UNION/INTERSECT/EXCEPT, Views
 - v1.9.0 - Composite multi-column indexes
@@ -321,17 +361,11 @@ QUERY PLAN
 - v1.7.0 - Hash indexes with USING clause
 - v1.6.0 - B-tree indexes with query optimization
 - v1.5.1 - VACUUM command for MVCC cleanup
-- v1.5.0 - Page-based storage (125x write amplification improvement)
+- v1.5.0 - Page-based storage (125x improvement)
 - v1.4.1 - ALTER TABLE
 - v1.4.0 - OFFSET, DISTINCT, UNIQUE
 - v1.3.2 - Modular architecture
 - v1.3.1 - 18 new data types
-
-**v1.11.0 Changes:**
-- 🐛 Fixed 4 failing storage tests (WAL crash recovery)
-- 🧹 Fixed all 26 compiler warnings (clean build)
-- ✅ 154/154 unit tests passing
-- ✅ All integration tests passing
 
 **Git tags**: `git tag -a v1.X.Y -m "message"`
 

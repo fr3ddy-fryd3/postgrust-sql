@@ -97,10 +97,10 @@ impl Server {
 
         let tx_manager = TransactionManager::new();
 
-        // Check if page-based storage should be used (runtime selection via env var)
+        // v2.0.2: Page-based storage is now mandatory (always enabled)
         let use_page_storage = std::env::var("RUSTDB_USE_PAGE_STORAGE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
+            .unwrap_or(true);  // Changed from false to true in v2.0.2
 
         let database_storage = if use_page_storage {
             const BUFFER_POOL_SIZE: usize = 1000;  // 1000 pages * 8KB = 8MB cache

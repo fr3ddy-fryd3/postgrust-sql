@@ -2,7 +2,6 @@
 ///
 /// v2.0.0: Legacy Vec<Row> storage has been removed.
 /// This module provides a unified interface for page-based row storage.
-
 use crate::types::{Row, DatabaseError};
 
 /// Trait for row storage operations

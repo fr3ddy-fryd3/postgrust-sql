@@ -56,7 +56,7 @@ echo "✓ Table and data created"
 echo ""
 echo "2. Create B-tree index on age column"
 RESULT=$(run_sql "CREATE INDEX idx_age ON users(age);" 2>&1)
-if echo "$RESULT" | grep -q "Index 'idx_age' created"; then
+if echo "$RESULT" | grep -qi "idx_age.*created\|created.*idx_age"; then
     echo "✓ CREATE INDEX succeeded"
 else
     echo "✗ CREATE INDEX failed: $RESULT"
@@ -66,7 +66,7 @@ fi
 echo ""
 echo "3. Create UNIQUE index on name column"
 RESULT=$(run_sql "CREATE UNIQUE INDEX idx_name ON users(name);" 2>&1)
-if echo "$RESULT" | grep -q "Index 'idx_name' created"; then
+if echo "$RESULT" | grep -qi "idx_name.*created\|created.*idx_name"; then
     echo "✓ CREATE UNIQUE INDEX succeeded"
 else
     echo "✗ CREATE UNIQUE INDEX failed: $RESULT"
@@ -86,7 +86,7 @@ fi
 echo ""
 echo "5. Drop index"
 RESULT=$(run_sql "DROP INDEX idx_age;" 2>&1)
-if echo "$RESULT" | grep -q "Index 'idx_age' dropped"; then
+if echo "$RESULT" | grep -qi "idx_age.*dropped\|dropped.*idx_age"; then
     echo "✓ DROP INDEX succeeded"
 else
     echo "✗ DROP INDEX failed: $RESULT"

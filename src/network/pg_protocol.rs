@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// `PostgreSQL` protocol version 3.0
-pub const PROTOCOL_VERSION: i32 = 196608; // (3 << 16) | 0
+pub const PROTOCOL_VERSION: i32 = 196_608; // (3 << 16) | 0
 
 /// SSL request code
-pub const SSL_REQUEST_CODE: i32 = 80877103; // Special code for SSL negotiation
+pub const SSL_REQUEST_CODE: i32 = 80_877_103; // Special code for SSL negotiation
 
 /// Message types (from backend to frontend)
 pub mod backend {

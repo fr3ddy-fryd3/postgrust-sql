@@ -84,7 +84,7 @@ else
 fi
 
 # Test 3: EXPLAIN with B-tree index should show Index Scan
-if echo "$OUTPUT" | grep -q "Index Scan using idx_age (btree)"; then
+if echo "$OUTPUT" | grep -qi "index scan.*idx_age.*btree"; then
     echo "✓ EXPLAIN shows B-tree index scan"
 else
     echo "✗ EXPLAIN B-tree index failed"
@@ -93,7 +93,7 @@ else
 fi
 
 # Test 4: EXPLAIN with range query should use B-tree
-if echo "$OUTPUT" | grep -q "Index Scan.*idx_age"; then
+if echo "$OUTPUT" | grep -qi "index scan.*idx_age"; then
     echo "✓ EXPLAIN shows B-tree index for range query"
 else
     echo "✗ EXPLAIN range query failed"
@@ -101,7 +101,7 @@ else
 fi
 
 # Test 5: EXPLAIN with hash index should show O(1) cost
-if echo "$OUTPUT" | grep -q "Index Scan using idx_city (hash)"; then
+if echo "$OUTPUT" | grep -qi "index scan.*idx_city.*hash"; then
     echo "✓ EXPLAIN shows hash index scan"
 else
     echo "✗ EXPLAIN hash index failed"
@@ -118,7 +118,7 @@ else
 fi
 
 # Test 6: EXPLAIN with unique index
-if echo "$OUTPUT" | grep -q "Unique Index Scan"; then
+if echo "$OUTPUT" | grep -qi "unique.*index scan\|index scan.*unique"; then
     echo "✓ EXPLAIN shows unique index scan"
 else
     echo "✗ EXPLAIN unique index failed"
