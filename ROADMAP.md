@@ -4,6 +4,24 @@
 
 ---
 
+## ✅ v2.2.2 - Bug Fixes and Improvements
+
+**Цель:** Исправление критических багов после v2.2.1
+**Статус:** Completed (2025-12-19)
+**Сложность:** Низкая
+**Breaking Changes:** No
+
+### Fixed Issues:
+1. ✅ **Dockerfile binary naming** - Fixed incorrect binary name `postgrustql` → `postgrustsql`
+2. ✅ **Dockerfile user** - Changed user from `rustdb` → `postgres` for consistency
+3. ✅ **Minor improvements** - Code cleanup and optimizations
+
+### Changes:
+- **Dockerfile**: Corrected binary path and user name for proper deployment
+- **Version bumped**: 2.2.1 → 2.2.2 in Cargo.toml, PKGBUILD, pgr_cli
+
+---
+
 ## ✅ v2.1.0 - Multi-Connection Transaction Isolation (DML only)
 
 **Цель:** Изоляция DML операций между разными TCP connections

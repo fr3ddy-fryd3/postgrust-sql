@@ -172,22 +172,32 @@ impl Server {
         database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Peek at the first 8 bytes to determine protocol
+        // Use timeout to avoid deadlock with clients that expect server to speak first
         let mut peek_buf = [0u8; 8];
-        socket.peek(&mut peek_buf).await?;
+        let peek_result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            socket.peek(&mut peek_buf)
+        ).await;
 
-        // PostgreSQL protocol starts with Int32 length followed by Int32 code
-        // Code can be:
-        // - Protocol version 3.0: 196608 (0x00030000)
-        // - SSL request: 80877103 (0x04D2162F)
-        // Text protocol starts with ASCII text
-        let length = i32::from_be_bytes([peek_buf[0], peek_buf[1], peek_buf[2], peek_buf[3]]);
-        let code = i32::from_be_bytes([peek_buf[4], peek_buf[5], peek_buf[6], peek_buf[7]]);
+        // If timeout or no data, assume text protocol (client expects server greeting)
+        let is_postgres = if let Ok(Ok(_)) = peek_result {
+            // PostgreSQL protocol starts with Int32 length followed by Int32 code
+            // Code can be:
+            // - Protocol version 3.0: 196608 (0x00030000)
+            // - SSL request: 80877103 (0x04D2162F)
+            // Text protocol starts with ASCII text
+            let length = i32::from_be_bytes([peek_buf[0], peek_buf[1], peek_buf[2], peek_buf[3]]);
+            let code = i32::from_be_bytes([peek_buf[4], peek_buf[5], peek_buf[6], peek_buf[7]]);
 
-        // If length is reasonable (< 10000) and code matches PostgreSQL protocol or SSL request
-        if length > 0
-            && length < 10000
-            && (code == pg_protocol::PROTOCOL_VERSION || code == pg_protocol::SSL_REQUEST_CODE)
-        {
+            // If length is reasonable (< 10000) and code matches PostgreSQL protocol or SSL request
+            length > 0
+                && length < 10000
+                && (code == pg_protocol::PROTOCOL_VERSION || code == pg_protocol::SSL_REQUEST_CODE)
+        } else {
+            false
+        };
+
+        if is_postgres {
             Self::handle_postgres_client(socket, instance, storage, tx_manager, database_storage)
                 .await
         } else {
@@ -915,7 +925,7 @@ impl Server {
         writer
             .write_all(b"Welcome to PostgrustSQL!\nType your SQL queries (end with semicolon)\nSupports: BEGIN, COMMIT, ROLLBACK for transactions\n")
             .await?;
-        writer.write_all(b"postgrustql> \n").await?;
+        writer.write_all(b"postgrustql>\n").await?;
         writer.flush().await?;
 
         let mut line = String::new();
@@ -932,7 +942,7 @@ impl Server {
             let query = line.trim();
 
             if query.is_empty() {
-                writer.write_all(b"postgrustql> \n").await?;
+                writer.write_all(b"postgrustql>\n").await?;
                 writer.flush().await?;
                 continue;
             }
@@ -953,6 +963,51 @@ impl Server {
                         let db = inst.get_database_mut(&session.database_name).unwrap();
 
                         match stmt {
+                            // User management commands (v2.2.2)
+                            crate::parser::Statement::CreateUser {
+                                username,
+                                password,
+                                is_superuser,
+                            } => {
+                                match inst.create_user(&username, &password, is_superuser) {
+                                    Ok(()) => {
+                                        let mut storage_guard = storage.lock().await;
+                                        if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                            format!("Error: Failed to persist user: {e}\n")
+                                        } else {
+                                            "CREATE USER\n".to_string()
+                                        }
+                                    }
+                                    Err(e) => format!("Error: {e}\n"),
+                                }
+                            }
+                            crate::parser::Statement::DropUser { username } => {
+                                match inst.drop_user(&username) {
+                                    Ok(()) => {
+                                        let mut storage_guard = storage.lock().await;
+                                        if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                            format!("Error: Failed to persist: {e}\n")
+                                        } else {
+                                            "DROP USER\n".to_string()
+                                        }
+                                    }
+                                    Err(e) => format!("Error: {e}\n"),
+                                }
+                            }
+                            crate::parser::Statement::AlterUser { username, password } => {
+                                match inst.users.get_mut(&username) {
+                                    Some(user) => {
+                                        user.set_password(&password);
+                                        let mut storage_guard = storage.lock().await;
+                                        if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                            format!("Error: Failed to persist: {e}\n")
+                                        } else {
+                                            "ALTER USER\n".to_string()
+                                        }
+                                    }
+                                    None => format!("Error: User '{}' not found\n", username),
+                                }
+                            }
                             crate::parser::Statement::Begin => {
                                 if transaction.is_active() {
                                     "Warning: Transaction already active\n".to_string()
@@ -1041,7 +1096,7 @@ impl Server {
             };
 
             writer.write_all(response.as_bytes()).await?;
-            writer.write_all(b"postgrustql> \n").await?;
+            writer.write_all(b"postgrustql>\n").await?;
             writer.flush().await?;
         }
 

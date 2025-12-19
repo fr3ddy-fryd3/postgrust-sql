@@ -23,20 +23,20 @@ RUN apt-get update && apt-get install -y \
   && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN useradd -m -u 1000 rustdb
+RUN useradd -m -u 1000 postgres
 
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/postgrustql /app/postgrustql
+COPY --from=builder /app/target/release/postgrustsql /app/postgrustsql
 
 # Create data directory
-RUN mkdir -p /app/data && chown -R rustdb:rustdb /app
+RUN mkdir -p /app/data && chown -R postgres:postgres /app
 
-USER rustdb
+USER postgres
 
 # Expose PostgreSQL default port
 EXPOSE 5432
 
 # Run the server
-CMD ["./postgrustql"]
+CMD ["./postgrustsql"]

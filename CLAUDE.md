@@ -4,7 +4,7 @@ Guidance for Claude Code when working with this repository.
 
 ## ВАЖНО
 **НЕ СОЗДАВАТЬ НИКОМУ НАХУЙ НЕ НУЖНЫЕ .MD ФАЙЛЫ, КОТОРЫЕ ЗАСОРЯЮТ РЕПОЗИТОРИЙ!**
-Только ROADMAP.md и README.md!
+Только ROADMAP.md, README.md и INSTALL.md (исключение для v2.2.0)!
 
 **НЕ ДЕЛАТЬ КОММИТЫ И ТЕГИ БЕЗ ЯВНОГО РАЗРЕШЕНИЯ ПОЛЬЗОВАТЕЛЯ!**
 Всегда спрашивать перед git commit и git tag.
@@ -340,7 +340,12 @@ Allowed lints (configured in `src/lib.rs`):
 
 ## Версионирование
 
-**Current**: v2.2.0 (Backup & Restore Tools)
+**Current**: v2.2.2 (Bug Fixes and Improvements)
+
+**v2.2.2 Changes:**
+- 🔧 Fixed Dockerfile binary naming (postgrustql → postgrustsql)
+- 🔧 Fixed Dockerfile user (rustdb → postgres)
+- 📝 Minor improvements and code cleanup
 
 **v2.2.0 Changes:**
 - 🔧 **pgr_dump** - database export utility (SQL + binary formats)

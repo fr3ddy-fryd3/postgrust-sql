@@ -1,0 +1,60 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Create postgres user if it doesn't exist
+        if ! getent passwd postgres > /dev/null; then
+            echo "Creating postgres user..."
+            adduser --system --group --home /var/lib/postgrustsql \
+                --no-create-home --disabled-password --disabled-login \
+                --gecos "PostgrustSQL database server" postgres
+        fi
+
+        # Set ownership of data directory
+        if [ -d /var/lib/postgrustsql ]; then
+            chown -R postgres:postgres /var/lib/postgrustsql
+            chmod 750 /var/lib/postgrustsql
+        fi
+
+        # Reload systemd daemon
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+
+        # Print installation message
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════╗"
+        echo "║     PostgrustSQL installed successfully                  ║"
+        echo "╠══════════════════════════════════════════════════════════╣"
+        echo "║ Configuration:                                           ║"
+        echo "║   Edit: /etc/postgrustsql/postgrustsql.toml              ║"
+        echo "║                                                          ║"
+        echo "║ Start service:                                           ║"
+        echo "║   sudo systemctl start postgrustsql                      ║"
+        echo "║   sudo systemctl enable postgrustsql                     ║"
+        echo "║                                                          ║"
+        echo "║ Connect with CLI:                                        ║"
+        echo "║   pgr_cli                                                ║"
+        echo "║                                                          ║"
+        echo "║ Backup/Restore:                                          ║"
+        echo "║   pgr_dump -o backup.sql                                 ║"
+        echo "║   pgr_restore backup.sql                                 ║"
+        echo "║                                                          ║"
+        echo "║ Documentation: /usr/share/doc/postgrustsql/              ║"
+        echo "╚══════════════════════════════════════════════════════════╝"
+        echo ""
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

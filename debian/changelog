@@ -1,0 +1,43 @@
+postgrustsql (2.2.0-1) unstable; urgency=medium
+
+  * New release: v2.2.0 - Backup & Restore Tools + Configuration Support
+  * Added pgr_dump utility (SQL and binary formats)
+  * Added pgr_restore utility with auto-format detection
+  * Added pgr_cli interactive client with clap argument parsing
+  * Added configuration file support via config crate
+  * Configuration priority: CLI args > ENV > file > defaults
+  * Config file locations: /etc/postgrustsql/postgrustsql.toml or ./postgrustsql.toml
+  * Added Makefile with build/install/package targets
+  * Added systemd service file
+  * Added Debian and Arch Linux packaging support
+
+ -- fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>  Thu, 19 Dec 2024 12:00:00 +0000
+
+postgrustsql (2.1.0-1) unstable; urgency=medium
+
+  * New release: v2.1.0 - Multi-Connection Transaction Isolation (DML only)
+  * GlobalTransactionManager with MVCC snapshot isolation
+  * DML (INSERT/UPDATE/DELETE) properly isolated between connections
+  * Auto-commit pattern for non-transactional operations
+  * READ COMMITTED isolation level (new snapshot per statement)
+
+ -- fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>  Wed, 18 Dec 2024 00:00:00 +0000
+
+postgrustsql (2.0.2-1) unstable; urgency=medium
+
+  * New release: v2.0.2 - VACUUM for PagedTable + Cleanup
+  * Removed ALL deprecated Table.rows usage
+  * Fixed 10 aggregate/group_by tests to use PagedTable
+  * Relaxed Clippy configuration
+  * Page-based storage now mandatory by default
+
+ -- fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>  Tue, 17 Dec 2024 00:00:00 +0000
+
+postgrustsql (2.0.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging
+  * PostgreSQL authentication protocol
+  * System catalogs (pg_catalog.*, information_schema.*)
+  * System functions (version(), current_database(), etc.)
+
+ -- fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>  Mon, 16 Dec 2024 00:00:00 +0000
