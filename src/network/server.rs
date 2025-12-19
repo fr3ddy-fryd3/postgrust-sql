@@ -963,6 +963,51 @@ impl Server {
                         let db = inst.get_database_mut(&session.database_name).unwrap();
 
                         match stmt {
+                            // User management commands (v2.2.2)
+                            crate::parser::Statement::CreateUser {
+                                username,
+                                password,
+                                is_superuser,
+                            } => {
+                                match inst.create_user(&username, &password, is_superuser) {
+                                    Ok(()) => {
+                                        let mut storage_guard = storage.lock().await;
+                                        if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                            format!("Error: Failed to persist user: {e}\n")
+                                        } else {
+                                            "CREATE USER\n".to_string()
+                                        }
+                                    }
+                                    Err(e) => format!("Error: {e}\n"),
+                                }
+                            }
+                            crate::parser::Statement::DropUser { username } => {
+                                match inst.drop_user(&username) {
+                                    Ok(()) => {
+                                        let mut storage_guard = storage.lock().await;
+                                        if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                            format!("Error: Failed to persist: {e}\n")
+                                        } else {
+                                            "DROP USER\n".to_string()
+                                        }
+                                    }
+                                    Err(e) => format!("Error: {e}\n"),
+                                }
+                            }
+                            crate::parser::Statement::AlterUser { username, password } => {
+                                match inst.users.get_mut(&username) {
+                                    Some(user) => {
+                                        user.set_password(&password);
+                                        let mut storage_guard = storage.lock().await;
+                                        if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                            format!("Error: Failed to persist: {e}\n")
+                                        } else {
+                                            "ALTER USER\n".to_string()
+                                        }
+                                    }
+                                    None => format!("Error: User '{}' not found\n", username),
+                                }
+                            }
                             crate::parser::Statement::Begin => {
                                 if transaction.is_active() {
                                     "Warning: Transaction already active\n".to_string()

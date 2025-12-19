@@ -26,9 +26,13 @@ impl SystemCatalog {
                 | "pg_catalog.pg_attribute"
                 | "pg_catalog.pg_index"
                 | "pg_catalog.pg_type"
-                | "pg_catalog.pg_namespace"
+                | "pg_namespace"
                 | "pg_catalog.pg_database"
                 | "pg_database"
+                | "pg_catalog.pg_roles"
+                | "pg_roles"
+                | "pg_catalog.pg_user"
+                | "pg_user"
                 | "information_schema.tables"
                 | "information_schema.columns"
         )
@@ -44,8 +48,10 @@ impl SystemCatalog {
             "pg_catalog.pg_attribute" => Self::pg_attribute(db),
             "pg_catalog.pg_index" => Self::pg_index(db),
             "pg_catalog.pg_type" => Self::pg_type(),
-            "pg_catalog.pg_namespace" => Self::pg_namespace(),
+            "pg_catalog.pg_namespace" | "pg_namespace" => Self::pg_namespace(),
             "pg_catalog.pg_database" | "pg_database" => Self::pg_database(db),
+            "pg_catalog.pg_roles" | "pg_roles" => Self::pg_roles(),
+            "pg_catalog.pg_user" | "pg_user" => Self::pg_user(),
             "information_schema.tables" => Self::information_schema_tables(db),
             "information_schema.columns" => Self::information_schema_columns(db),
             _ => Err(DatabaseError::TableNotFound(table_name.to_string())),
@@ -375,6 +381,69 @@ impl SystemCatalog {
             DataType::Bytea => "bytea".to_string(),
             DataType::Enum { name, .. } => name.clone(),
         }
+    }
+
+    /// `pg_catalog.pg_roles` - Database roles (v2.2.2)
+    ///
+    /// NOTE: This is a minimal stub implementation.
+    /// Real implementation requires ServerInstance access (TODO: v2.3.0)
+    ///
+    /// Schema:
+    /// - rolname: Role name
+    /// - rolsuper: Is superuser?
+    /// - rolinherit: Can inherit privileges?
+    /// - rolcreaterole: Can create roles?
+    /// - rolcreatedb: Can create databases?
+    /// - rolcanlogin: Can login?
+    fn pg_roles() -> Result<QueryResult, DatabaseError> {
+        let columns = vec![
+            "rolname".to_string(),
+            "rolsuper".to_string(),
+            "rolinherit".to_string(),
+            "rolcreaterole".to_string(),
+            "rolcreatedb".to_string(),
+            "rolcanlogin".to_string(),
+        ];
+
+        // Minimal stub: return default postgres superuser
+        // TODO (v2.3.0): Query actual users from ServerInstance
+        let rows = vec![vec![
+            "postgres".to_string(),        // rolname
+            "t".to_string(),                // rolsuper
+            "t".to_string(),                // rolinherit
+            "t".to_string(),                // rolcreaterole
+            "t".to_string(),                // rolcreatedb
+            "t".to_string(),                // rolcanlogin
+        ]];
+
+        Ok(QueryResult::Rows(rows, columns))
+    }
+
+    /// `pg_catalog.pg_user` - Database users (v2.2.2)
+    ///
+    /// NOTE: This is a minimal stub implementation.
+    /// Real implementation requires ServerInstance access (TODO: v2.3.0)
+    ///
+    /// Schema:
+    /// - usename: User name
+    /// - usesuper: Is superuser?
+    /// - usecreatedb: Can create databases?
+    fn pg_user() -> Result<QueryResult, DatabaseError> {
+        let columns = vec![
+            "usename".to_string(),
+            "usesuper".to_string(),
+            "usecreatedb".to_string(),
+        ];
+
+        // Minimal stub: return default postgres superuser
+        // TODO (v2.3.0): Query actual users from ServerInstance
+        let rows = vec![vec![
+            "postgres".to_string(),        // usename
+            "t".to_string(),                // usesuper
+            "t".to_string(),                // usecreatedb
+        ]];
+
+        Ok(QueryResult::Rows(rows, columns))
     }
 }
 

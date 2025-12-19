@@ -340,7 +340,12 @@ Allowed lints (configured in `src/lib.rs`):
 
 ## Версионирование
 
-**Current**: v2.2.0 (Backup & Restore Tools)
+**Current**: v2.2.2 (Bug Fixes and Improvements)
+
+**v2.2.2 Changes:**
+- 🔧 Fixed Dockerfile binary naming (postgrustql → postgrustsql)
+- 🔧 Fixed Dockerfile user (rustdb → postgres)
+- 📝 Minor improvements and code cleanup
 
 **v2.2.0 Changes:**
 - 🔧 **pgr_dump** - database export utility (SQL + binary formats)

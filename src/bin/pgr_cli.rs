@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ClientConfig::load(&args);
 
     println!("╔══════════════════════════════════════════════════════════╗");
-    println!("║            PostgrustSQL CLI Client v2.2.1                ║");
+    println!("║            PostgrustSQL CLI Client v2.2.2                ║");
     println!("╚══════════════════════════════════════════════════════════╝");
     println!("Connecting to {}:{}...", config.host, config.port);
     println!("User: {}, Database: {}\n", config.user, config.database);
