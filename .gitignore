@@ -3,3 +3,4 @@
 Cargo.lock
 *.json
 tests/integration/data/
+*.tar.gz

@@ -1,0 +1,52 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    purge)
+        # Remove data directory only on purge (not on upgrade/remove)
+        if [ -d /var/lib/postgrustsql ]; then
+            echo "Purging data directory /var/lib/postgrustsql..."
+            rm -rf /var/lib/postgrustsql
+        fi
+
+        # Remove configuration
+        if [ -d /etc/postgrustsql ]; then
+            echo "Purging configuration directory /etc/postgrustsql..."
+            rm -rf /etc/postgrustsql
+        fi
+
+        # Remove postgres user if it exists and was created by us
+        if getent passwd postgres > /dev/null; then
+            echo "Note: postgres user not removed (may be used by other packages)"
+        fi
+
+        echo ""
+        echo "PostgrustSQL has been purged."
+        echo "All data and configuration have been removed."
+        echo ""
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        # Reload systemd daemon
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+
+        if [ "$1" = "remove" ]; then
+            echo ""
+            echo "PostgrustSQL has been removed."
+            echo "Data directory /var/lib/postgrustsql was preserved."
+            echo "To remove data: sudo apt purge postgrustsql"
+            echo ""
+        fi
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

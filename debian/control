@@ -1,0 +1,34 @@
+Source: postgrustsql
+Section: database
+Priority: optional
+Maintainer: fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>
+Build-Depends: debhelper (>= 12), cargo, rustc (>= 1.70)
+Standards-Version: 4.5.1
+Homepage: https://github.com/fr3ddy-fryd3/postgrust-sql
+Vcs-Git: https://github.com/fr3ddy-fryd3/postgrust-sql.git
+Vcs-Browser: https://github.com/fr3ddy-fryd3/postgrust-sql
+
+Package: postgrustsql
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
+Suggests: postgresql-client
+Description: PostgreSQL-compatible database server written in Rust
+ PostgrustSQL is a PostgreSQL-compatible database server implementation
+ written in Rust, featuring:
+  * PostgreSQL wire protocol compatibility
+  * 23 data types (~45% PostgreSQL compatibility)
+  * MVCC (Multi-Version Concurrency Control)
+  * Transaction support (BEGIN/COMMIT/ROLLBACK)
+  * FOREIGN KEY constraints and JOINs
+  * B-tree and Hash indexes
+  * Binary storage with WAL (Write-Ahead Log)
+  * Page-based storage for efficient writes
+  * VACUUM command for MVCC cleanup
+  * Extended WHERE operators (BETWEEN, LIKE, IN, IS NULL)
+  * CASE expressions and set operations (UNION/INTERSECT/EXCEPT)
+  .
+ This package includes:
+  * postgrustql - database server
+  * pgr_cli - interactive CLI client
+  * pgr_dump - backup utility
+  * pgr_restore - restore utility

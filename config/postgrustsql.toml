@@ -1,0 +1,13 @@
+# PostgrustSQL Server Configuration
+# Priority: ENV variables > this file > defaults
+
+# Server settings
+host = "127.0.0.1"
+port = 5432
+data_dir = "/var/lib/postgrustsql/data"
+initdb = true
+
+# Authentication
+user = "postgres"
+password = "postgres"
+database = "postgres"

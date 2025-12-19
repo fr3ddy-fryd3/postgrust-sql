@@ -1,0 +1,30 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # Stop service if running
+        if [ -d /run/systemd/system ]; then
+            if systemctl is-active --quiet postgrustsql 2>/dev/null; then
+                echo "Stopping postgrustsql service..."
+                systemctl stop postgrustsql >/dev/null 2>&1 || true
+            fi
+            if systemctl is-enabled --quiet postgrustsql 2>/dev/null; then
+                echo "Disabling postgrustsql service..."
+                systemctl disable postgrustsql >/dev/null 2>&1 || true
+            fi
+        fi
+        ;;
+
+    failed-upgrade)
+        ;;
+
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

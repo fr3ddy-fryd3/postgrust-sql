@@ -1,0 +1,39 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_test:
+	# Skip tests during package build (require server setup)
+	@echo "Skipping tests (run manually with: cargo test --lib)"
+
+override_dh_auto_install:
+	# Install binaries
+	install -Dm755 target/release/postgrustql debian/postgrustsql/usr/bin/postgrustql
+	install -Dm755 target/release/pgr_cli debian/postgrustsql/usr/bin/pgr_cli
+	install -Dm755 target/release/pgr_dump debian/postgrustsql/usr/bin/pgr_dump
+	install -Dm755 target/release/pgr_restore debian/postgrustsql/usr/bin/pgr_restore
+
+	# Install configuration
+	install -Dm644 config/postgrustsql.toml debian/postgrustsql/etc/postgrustsql/postgrustsql.toml
+
+	# Install systemd service
+	install -Dm644 systemd/postgrustsql.service debian/postgrustsql/lib/systemd/system/postgrustsql.service
+
+	# Create data directory
+	install -dm755 debian/postgrustsql/var/lib/postgrustsql
+
+	# Install documentation
+	install -Dm644 README.md debian/postgrustsql/usr/share/doc/postgrustsql/README.md
+	install -Dm644 ROADMAP.md debian/postgrustsql/usr/share/doc/postgrustsql/ROADMAP.md
+
+override_dh_auto_clean:
+	cargo clean || true
+	rm -rf target/

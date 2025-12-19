@@ -1,0 +1,52 @@
+[Unit]
+Description=PostgrustSQL Database Server
+Documentation=https://github.com/fr3ddy-fryd3/postgrust-sql
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+
+# Environment configuration
+Environment="POSTGRUSTQL_HOST=127.0.0.1"
+Environment="POSTGRUSTQL_PORT=5432"
+Environment="POSTGRUSTQL_DATA_DIR=/var/lib/postgrustsql/data"
+Environment="POSTGRUSTQL_INITDB=true"
+
+# Read additional config from file
+EnvironmentFile=-/etc/postgrustsql/postgrustsql.env
+
+# Working directory
+WorkingDirectory=/var/lib/postgrustsql
+
+# Start command
+ExecStart=/usr/local/bin/postgrustql
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=postgrustsql
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/postgrustsql
+
+# Allow binding to privileged ports (if needed)
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

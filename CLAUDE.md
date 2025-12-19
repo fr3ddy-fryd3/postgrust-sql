@@ -4,7 +4,7 @@ Guidance for Claude Code when working with this repository.
 
 ## ВАЖНО
 **НЕ СОЗДАВАТЬ НИКОМУ НАХУЙ НЕ НУЖНЫЕ .MD ФАЙЛЫ, КОТОРЫЕ ЗАСОРЯЮТ РЕПОЗИТОРИЙ!**
-Только ROADMAP.md и README.md!
+Только ROADMAP.md, README.md и INSTALL.md (исключение для v2.2.0)!
 
 **НЕ ДЕЛАТЬ КОММИТЫ И ТЕГИ БЕЗ ЯВНОГО РАЗРЕШЕНИЯ ПОЛЬЗОВАТЕЛЯ!**
 Всегда спрашивать перед git commit и git tag.
