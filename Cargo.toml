@@ -1,6 +1,6 @@
 [package]
 name = "postgrustql"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2024"
 license = "MIT"
 authors = ["fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>"]
@@ -52,3 +52,20 @@ suspicious = { level = "warn", priority = 0 }
 complexity = { level = "warn", priority = 0 }
 perf = { level = "warn", priority = 0 }
 style = { level = "warn", priority = 0 }
+
+# Binary targets
+[[bin]]
+name = "postgrustsql"
+path = "src/main.rs"
+
+[[bin]]
+name = "pgr_cli"
+path = "src/bin/pgr_cli.rs"
+
+[[bin]]
+name = "pgr_dump"
+path = "src/bin/pgr_dump.rs"
+
+[[bin]]
+name = "pgr_restore"
+path = "src/bin/pgr_restore.rs"

@@ -13,7 +13,7 @@ use std::path::Path;
 #[command(about = "PostgrustSQL interactive CLI client", long_about = None)]
 struct Args {
     /// Server host
-    #[arg(short = 'h', long)]
+    #[arg(short = 'H', long)]
     host: Option<String>,
 
     /// Server port
@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ClientConfig::load(&args);
 
     println!("╔══════════════════════════════════════════════════════════╗");
-    println!("║            PostgrustSQL CLI Client v2.2.0                ║");
+    println!("║            PostgrustSQL CLI Client v2.2.1                ║");
     println!("╚══════════════════════════════════════════════════════════╝");
     println!("Connecting to {}:{}...", config.host, config.port);
     println!("User: {}, Database: {}\n", config.user, config.database);

@@ -172,22 +172,32 @@ impl Server {
         database_storage: Option<Arc<Mutex<crate::storage::DatabaseStorage>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Peek at the first 8 bytes to determine protocol
+        // Use timeout to avoid deadlock with clients that expect server to speak first
         let mut peek_buf = [0u8; 8];
-        socket.peek(&mut peek_buf).await?;
+        let peek_result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            socket.peek(&mut peek_buf)
+        ).await;
 
-        // PostgreSQL protocol starts with Int32 length followed by Int32 code
-        // Code can be:
-        // - Protocol version 3.0: 196608 (0x00030000)
-        // - SSL request: 80877103 (0x04D2162F)
-        // Text protocol starts with ASCII text
-        let length = i32::from_be_bytes([peek_buf[0], peek_buf[1], peek_buf[2], peek_buf[3]]);
-        let code = i32::from_be_bytes([peek_buf[4], peek_buf[5], peek_buf[6], peek_buf[7]]);
+        // If timeout or no data, assume text protocol (client expects server greeting)
+        let is_postgres = if let Ok(Ok(_)) = peek_result {
+            // PostgreSQL protocol starts with Int32 length followed by Int32 code
+            // Code can be:
+            // - Protocol version 3.0: 196608 (0x00030000)
+            // - SSL request: 80877103 (0x04D2162F)
+            // Text protocol starts with ASCII text
+            let length = i32::from_be_bytes([peek_buf[0], peek_buf[1], peek_buf[2], peek_buf[3]]);
+            let code = i32::from_be_bytes([peek_buf[4], peek_buf[5], peek_buf[6], peek_buf[7]]);
 
-        // If length is reasonable (< 10000) and code matches PostgreSQL protocol or SSL request
-        if length > 0
-            && length < 10000
-            && (code == pg_protocol::PROTOCOL_VERSION || code == pg_protocol::SSL_REQUEST_CODE)
-        {
+            // If length is reasonable (< 10000) and code matches PostgreSQL protocol or SSL request
+            length > 0
+                && length < 10000
+                && (code == pg_protocol::PROTOCOL_VERSION || code == pg_protocol::SSL_REQUEST_CODE)
+        } else {
+            false
+        };
+
+        if is_postgres {
             Self::handle_postgres_client(socket, instance, storage, tx_manager, database_storage)
                 .await
         } else {

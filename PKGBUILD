@@ -1,6 +1,6 @@
 # Maintainer: fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>
 pkgname=postgrustsql
-pkgver=2.2.0
+pkgver=2.2.1
 pkgrel=1
 pkgdesc="PostgreSQL-compatible database server written in Rust with MVCC, transactions, and full SQL support"
 arch=('x86_64')
