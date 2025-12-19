@@ -1,0 +1,67 @@
+post_install() {
+    # Create postgres user if it doesn't exist
+    if ! getent passwd postgres > /dev/null 2>&1; then
+        echo "Creating postgres user..."
+        useradd -r -M -s /bin/false postgres
+    fi
+
+    # Create and set ownership of data directory
+    mkdir -p /var/lib/postgrustsql/data
+    chown -R postgres:postgres /var/lib/postgrustsql
+    chmod 750 /var/lib/postgrustsql
+
+    # Reload systemd
+    systemctl daemon-reload 2>/dev/null || true
+
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║     PostgrustSQL installed successfully                  ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║ Configuration:                                           ║"
+    echo "║   Edit: /etc/postgrustsql/postgrustsql.toml              ║"
+    echo "║                                                          ║"
+    echo "║ Start service:                                           ║"
+    echo "║   sudo systemctl start postgrustsql                      ║"
+    echo "║   sudo systemctl enable postgrustsql                     ║"
+    echo "║                                                          ║"
+    echo "║ Connect with CLI:                                        ║"
+    echo "║   pgr_cli                                                ║"
+    echo "║                                                          ║"
+    echo "║ Documentation: /usr/share/doc/postgrustsql/              ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+post_upgrade() {
+    # Create directory if it doesn't exist (for upgrades)
+    mkdir -p /var/lib/postgrustsql/data
+    chown -R postgres:postgres /var/lib/postgrustsql 2>/dev/null || true
+    chmod 750 /var/lib/postgrustsql 2>/dev/null || true
+
+    # Reload systemd
+    systemctl daemon-reload 2>/dev/null || true
+
+    echo "PostgrustSQL upgraded. Restart service: sudo systemctl restart postgrustsql"
+}
+
+pre_remove() {
+    # Stop service if running
+    if systemctl is-active --quiet postgrustsql 2>/dev/null; then
+        echo "Stopping postgrustsql service..."
+        systemctl stop postgrustsql 2>/dev/null || true
+    fi
+    if systemctl is-enabled --quiet postgrustsql 2>/dev/null; then
+        systemctl disable postgrustsql 2>/dev/null || true
+    fi
+}
+
+post_remove() {
+    # Reload systemd
+    systemctl daemon-reload 2>/dev/null || true
+
+    echo ""
+    echo "PostgrustSQL has been removed."
+    echo "Data directory /var/lib/postgrustsql was preserved."
+    echo "Remove manually if needed: sudo rm -rf /var/lib/postgrustsql"
+    echo ""
+}

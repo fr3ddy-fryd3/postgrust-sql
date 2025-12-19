@@ -22,7 +22,7 @@ EnvironmentFile=-/etc/postgrustsql/postgrustsql.env
 WorkingDirectory=/var/lib/postgrustsql
 
 # Start command
-ExecStart=/usr/local/bin/postgrustql
+ExecStart=/usr/bin/postgrustql
 
 # Restart policy
 Restart=on-failure
