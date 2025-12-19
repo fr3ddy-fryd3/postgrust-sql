@@ -21,11 +21,12 @@ cargo run --release
 cargo run --example cli
 ```
 
-## Возможности (v2.1.0)
+## Возможности (v2.2.0)
 
 ### Основное
 - **SQL запросы**: CREATE/DROP TABLE/VIEW, INSERT, SELECT, UPDATE, DELETE, SHOW TABLES
 - **Multi-Connection Transaction Isolation** (v2.1.0): DML изолирован между connections
+- **Backup & Restore** (v2.2.0): pgr_dump/pgr_restore утилиты (SQL + binary форматы)
 - **MVCC (Multi-Version Concurrency Control)**: изоляция с версионированием строк (xmin/xmax)
 - **WAL (Write-Ahead Log)**: автоматическое логирование операций с crash recovery
 - **Транзакции**: BEGIN, COMMIT, ROLLBACK с READ COMMITTED isolation
@@ -288,6 +289,37 @@ ROLLBACK;
 ```
 
 **Важно:** Изменения в транзакции видны сразу, но сохраняются на диск только после COMMIT.
+
+## Backup & Restore (v2.2.0)
+
+### Экспорт базы данных
+
+```bash
+# Полный дамп (схема + данные) в SQL формат
+./target/release/pgr_dump postgres > backup.sql
+
+# Только схема (CREATE statements)
+./target/release/pgr_dump --schema-only postgres > schema.sql
+
+# Только данные (INSERT statements)
+./target/release/pgr_dump --data-only postgres > data.sql
+
+# Бинарный формат (быстрее для больших БД)
+./target/release/pgr_dump --format=binary postgres > backup.bin
+```
+
+### Импорт базы данных
+
+```bash
+# Восстановление из SQL дампа
+./target/release/pgr_restore postgres < backup.sql
+
+# Восстановление из бинарного формата
+./target/release/pgr_restore --format=binary postgres < backup.bin
+
+# Dry-run (только валидация, без выполнения)
+./target/release/pgr_restore --dry-run postgres < backup.sql
+```
 
 ## Подключение к серверу
 

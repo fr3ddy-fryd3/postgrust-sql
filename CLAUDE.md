@@ -13,7 +13,7 @@ Guidance for Claude Code when working with this repository.
 
 **Run:**
 ```bash
-cargo run --release                        # Server (port 5432)
+cargo run --release --bin postgrustql      # Server (port 5432)
 cargo run --example cli                    # CLI client
 cargo test                                 # 173 tests (all passing ✅ v2.1.0)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
@@ -23,6 +23,12 @@ cargo test                                 # 173 tests (all passing ✅ v2.1.0)
 ./tests/integration/test_explain.sh        # Test EXPLAIN command
 ./tests/integration/test_sql_expressions.sh # Test CASE & set operations (v1.10.0)
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
+
+# Backup & Restore (v2.2.0)
+cargo build --release --bin pgr_dump --bin pgr_restore
+./target/release/pgr_dump postgres > backup.sql      # SQL dump
+./target/release/pgr_dump --format=binary postgres > backup.bin  # Binary dump
+./target/release/pgr_restore postgres < backup.sql   # Restore from SQL
 ```
 
 **Features:**
@@ -30,6 +36,7 @@ printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 - 23 data types (~45% PostgreSQL compatibility)
 - FOREIGN KEY, JOIN (INNER/LEFT/RIGHT), SERIAL/BIGSERIAL
 - **Multi-connection transaction isolation (v2.1.0)** - DML properly isolated between connections ✨
+- **Backup & Restore tools (v2.2.0)** - pgr_dump/pgr_restore (SQL + binary formats) 🔧
 - Transactions (BEGIN/COMMIT/ROLLBACK), MVCC (xmin/xmax)
 - Binary storage + WAL (checkpoint every 100 ops)
 - Page-based storage (v1.5.0, 125x write amplification improvement)
@@ -333,7 +340,16 @@ Allowed lints (configured in `src/lib.rs`):
 
 ## Версионирование
 
-**Current**: v2.1.0 (Multi-Connection Transaction Isolation - DML only)
+**Current**: v2.2.0 (Backup & Restore Tools)
+
+**v2.2.0 Changes:**
+- 🔧 **pgr_dump** - database export utility (SQL + binary formats)
+- 🔄 **pgr_restore** - database import utility with transaction support
+- 📊 SQL format: Full schema + data export (CREATE TYPE/TABLE/INDEX/VIEW + INSERT)
+- ⚡ Binary format: Fast bincode serialization for large databases
+- ✅ Support for all 23 data types, composite indexes, enums, views
+- 🧪 Integration test suite for dump/restore verification
+- 📝 CLI with clap: --schema-only, --data-only, --format options
 
 **v2.1.0 Changes:**
 - 🔐 GlobalTransactionManager with MVCC snapshot isolation
