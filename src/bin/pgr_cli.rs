@@ -168,8 +168,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Add to history
                 let _ = rl.add_history_entry(query);
 
+                // Handle meta-commands (psql-like)
+                let actual_query = if query.starts_with('\\') {
+                    match query {
+                        "\\q" | "\\quit" => "quit",
+                        "\\l" | "\\list" => "SELECT datname FROM pg_database;",
+                        "\\d" | "\\dt" => "SHOW TABLES;",
+                        "\\?" | "\\h" | "\\help" => {
+                            println!("Meta-commands:");
+                            println!("  \\q, \\quit          - Quit");
+                            println!("  \\l, \\list          - List databases");
+                            println!("  \\d, \\dt            - List tables");
+                            println!("  \\d <table>         - Describe table (not implemented)");
+                            println!("  \\?, \\h, \\help      - Show this help");
+                            println!("\nSQL commands: CREATE, INSERT, SELECT, UPDATE, DELETE, etc.");
+                            continue;
+                        }
+                        _ if query.starts_with("\\d ") => {
+                            // \d table_name - for now just pass as-is
+                            // TODO: implement DESCRIBE table_name
+                            query
+                        }
+                        _ => {
+                            println!("Unknown meta-command: {}. Use \\? for help.", query);
+                            continue;
+                        }
+                    }
+                } else {
+                    query
+                };
+
                 // Check for quit/exit
-                if query.eq_ignore_ascii_case("quit") || query.eq_ignore_ascii_case("exit") {
+                if actual_query.eq_ignore_ascii_case("quit") || actual_query.eq_ignore_ascii_case("exit") {
                     writer.write_all(b"quit\n").await?;
                     writer.flush().await?;
 
@@ -199,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 // Send query
-                writer.write_all(query.as_bytes()).await?;
+                writer.write_all(actual_query.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;
 

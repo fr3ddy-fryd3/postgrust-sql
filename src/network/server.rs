@@ -915,7 +915,7 @@ impl Server {
         writer
             .write_all(b"Welcome to PostgrustSQL!\nType your SQL queries (end with semicolon)\nSupports: BEGIN, COMMIT, ROLLBACK for transactions\n")
             .await?;
-        writer.write_all(b"postgrustql> \n").await?;
+        writer.write_all(b"postgrustql>\n").await?;
         writer.flush().await?;
 
         let mut line = String::new();
@@ -932,7 +932,7 @@ impl Server {
             let query = line.trim();
 
             if query.is_empty() {
-                writer.write_all(b"postgrustql> \n").await?;
+                writer.write_all(b"postgrustql>\n").await?;
                 writer.flush().await?;
                 continue;
             }
@@ -1041,7 +1041,7 @@ impl Server {
             };
 
             writer.write_all(response.as_bytes()).await?;
-            writer.write_all(b"postgrustql> \n").await?;
+            writer.write_all(b"postgrustql>\n").await?;
             writer.flush().await?;
         }
 
