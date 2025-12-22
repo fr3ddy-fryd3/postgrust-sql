@@ -4,6 +4,122 @@
 
 ---
 
+## ✅ v2.3.0 - Role-Based Access Control (RBAC)
+
+**Цель:** Полноценная PostgreSQL-style система прав доступа
+**Статус:** Completed (2025-12-22)
+**Сложность:** Высокая
+**Breaking Changes:** Moderate (added owner field to tables, permission enforcement)
+
+### Реализовано:
+1. ✅ **Roles System** - CREATE/DROP ROLE, role hierarchy (member_of)
+2. ✅ **Role Membership** - GRANT/REVOKE role TO/FROM user
+3. ✅ **Table Ownership** - Every table has an owner (creator by default)
+4. ✅ **Table-level Privileges** - GRANT/REVOKE SELECT/INSERT/UPDATE/DELETE ON TABLE
+5. ✅ **Permission Enforcement** - Automatic checks before DML/DDL operations
+6. ✅ **System Catalogs** - pg_class (relowner), pg_auth_members, table_privileges
+7. ✅ **198 unit tests passing** (9 new RBAC tests)
+
+### SQL Commands:
+```sql
+-- Role Management
+CREATE ROLE readonly;
+CREATE ROLE admin SUPERUSER;
+DROP ROLE readonly;
+
+-- Role Assignment
+GRANT readonly TO alice;
+REVOKE readonly FROM alice;
+
+-- Table Creation (owner = creator)
+CREATE TABLE orders (id SERIAL, amount NUMERIC);
+-- Owner: current session user
+
+-- Change Owner
+ALTER TABLE orders OWNER TO bob;
+
+-- Table-level Privileges
+GRANT SELECT ON TABLE orders TO alice;
+GRANT INSERT, UPDATE ON TABLE orders TO readonly;
+REVOKE SELECT ON TABLE orders FROM alice;
+
+-- Ownership/Permission Checks
+SELECT * FROM orders;  -- Requires SELECT privilege or ownership
+INSERT INTO orders VALUES (1, 100);  -- Requires INSERT privilege
+DROP TABLE orders;  -- Requires ownership or superuser
+```
+
+### Структура:
+- **src/core/role.rs** (NEW): Role struct with membership hierarchy
+- **src/core/table_metadata.rs** (NEW): Table-level privilege management
+- **src/core/database.rs**: Added check_table_permission(), is_table_owner()
+- **src/core/server_instance.rs**: Role management + permission checks
+  - create_role(), drop_role(), grant_role_to_user(), revoke_role_from_user()
+  - get_user_roles() - recursive role collection
+  - check_table_permission() - checks user/role table privileges
+  - is_table_owner_or_superuser() - DDL permission checks
+- **src/core/table.rs**: Added owner field
+- **src/parser/ddl.rs**: Parsers for CREATE/DROP ROLE, GRANT/REVOKE, ALTER TABLE OWNER TO
+- **src/executor/system_catalogs.rs**: Updated pg_class (relowner), added pg_auth_members, table_privileges
+- **src/network/server.rs**: Permission enforcement before query execution
+
+### Permission Model:
+```
+Superuser → All Permissions
+    ↓
+Table Owner → All Permissions on owned tables
+    ↓
+Direct Privilege Grant → Specific operations
+    ↓
+Role Membership → Inherited privileges (recursive)
+```
+
+### Ключевые возможности:
+- **Role Hierarchy**: analyst → readonly → user (recursive inheritance)
+- **Automatic Ownership**: CREATE TABLE sets current user as owner
+- **Owner Privileges**: Owners have all privileges (SELECT/INSERT/UPDATE/DELETE)
+- **Superuser Bypass**: Superusers bypass all permission checks
+- **Recursive Role Collection**: Supports multi-level role inheritance
+- **Permission Enforcement**: Checked before SELECT/INSERT/UPDATE/DELETE/ALTER/DROP
+
+### Тесты (9 новых):
+1. test_create_role - Создание ролей и проверка дубликатов
+2. test_drop_role - Удаление ролей
+3. test_grant_revoke_role - Назначение/отзыв ролей
+4. test_role_hierarchy - Рекурсивное наследование ролей
+5. test_table_ownership - Отслеживание владельцев таблиц
+6. test_table_permission_checks - Проверка прав на таблицах
+7. test_superuser_permissions - Bypass всех проверок для superuser
+8. test_role_based_permissions - Права через членство в ролях
+9. test_is_table_owner_or_superuser - Проверки для DDL
+
+### System Catalogs:
+```sql
+SELECT * FROM pg_catalog.pg_class;  -- relowner added
+SELECT * FROM pg_catalog.pg_auth_members;  -- role membership (stub)
+SELECT * FROM pg_catalog.table_privileges;  -- table-level grants
+```
+
+### Архитектура изменений:
+```rust
+// Before v2.3.0: No permission checks
+CREATE TABLE orders (...);  // Anyone can create
+SELECT * FROM orders;        // Anyone can read
+
+// After v2.3.0: Full RBAC
+CREATE TABLE orders (...);  // owner = session.username
+SELECT * FROM orders;        // Error: Permission denied (if not owner/granted)
+GRANT SELECT ON TABLE orders TO alice;  // Grant access
+-- Now alice can SELECT
+```
+
+### Совместимость:
+- Обратная совместимость: старые базы получают owner = "postgres" для существующих таблиц
+- PostgreSQL-compatible syntax для GRANT/REVOKE
+- Полная поддержка role hierarchy как в PostgreSQL
+
+---
+
 ## ✅ v2.2.2 - Bug Fixes and Improvements
 
 **Цель:** Исправление критических багов после v2.2.1
@@ -13,7 +129,7 @@
 
 ### Fixed Issues:
 1. ✅ **Dockerfile binary naming** - Fixed incorrect binary name `postgrustql` → `postgrustsql`
-2. ✅ **Dockerfile user** - Changed user from `rustdb` → `postgres` for consistency
+2. ✅ **Docker user naming** - Changed user from `rustdb` → `postgrust` for consistency
 3. ✅ **Minor improvements** - Code cleanup and optimizations
 
 ### Changes:
@@ -258,7 +374,7 @@ pg_database_size(name) -- Returns database size
 
 ### psql Connectivity Verified:
 ```bash
-psql -h 127.0.0.1 -p 5432 -U rustdb -d main
+psql -h 127.0.0.1 -p 5432 -U postgrust -d main
 # Works! Authentication flow compatible
 \d          # Shows tables
 \dt         # Shows tables

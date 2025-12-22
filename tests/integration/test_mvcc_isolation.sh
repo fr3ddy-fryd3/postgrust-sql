@@ -6,7 +6,7 @@
 
 set -e
 
-DATA_DIR="/tmp/rustdb_mvcc_test_$$"
+DATA_DIR="/tmp/postgrust_mvcc_test_$$"
 SERVER_PID=""
 
 cleanup() {

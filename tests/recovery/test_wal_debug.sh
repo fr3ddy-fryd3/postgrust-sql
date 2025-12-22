@@ -1,6 +1,6 @@
 #!/bin/bash
 
-pkill rustdb 2>/dev/null
+pkill postgrust 2>/dev/null
 sleep 1
 
 rm -rf data/

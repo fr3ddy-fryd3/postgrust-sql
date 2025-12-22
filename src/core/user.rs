@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 /// Пользователь базы данных
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,10 +13,12 @@ pub struct User {
     /// Права на уровне сервера
     pub can_create_db: bool,
     pub can_create_user: bool,
+    /// Роли, к которым принадлежит пользователь
+    pub roles: HashSet<String>,
 }
 
 impl User {
-    #[must_use] 
+    #[must_use]
     pub fn new(username: String, password: &str, is_superuser: bool) -> Self {
         Self {
             username,
@@ -23,7 +26,24 @@ impl User {
             is_superuser,
             can_create_db: is_superuser,
             can_create_user: is_superuser,
+            roles: HashSet::new(),
         }
+    }
+
+    /// Добавляет роль пользователю
+    pub fn add_role(&mut self, role_name: &str) {
+        self.roles.insert(role_name.to_string());
+    }
+
+    /// Удаляет роль у пользователя
+    pub fn remove_role(&mut self, role_name: &str) {
+        self.roles.remove(role_name);
+    }
+
+    /// Проверяет, имеет ли пользователь роль
+    #[must_use]
+    pub fn has_role(&self, role_name: &str) -> bool {
+        self.roles.contains(role_name)
     }
 
     /// Хэширует пароль с использованием SHA-256

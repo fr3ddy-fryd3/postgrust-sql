@@ -11,7 +11,7 @@ echo "✓ Cleaned old data"
 
 # Start server in background
 echo "Starting server..."
-cargo run --release > /tmp/rustdb_server.log 2>&1 &
+cargo run --release > /tmp/postgrust_server.log 2>&1 &
 SERVER_PID=$!
 sleep 3
 

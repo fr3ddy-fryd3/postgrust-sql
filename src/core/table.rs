@@ -26,6 +26,8 @@ pub struct Table {
     pub rows: Vec<Row>,
     /// Sequence counters for SERIAL columns: `column_name` -> `next_value`
     pub sequences: HashMap<String, i64>,
+    /// v2.3.0: Owner of the table (username who created it)
+    pub owner: String,
     // Note: PagedTable cannot be stored here because:
     // 1. Arc<Mutex<PageManager>> is not serializable
     // 2. PagedTable is managed externally by Database
@@ -36,6 +38,13 @@ impl Table {
     #[must_use]
     #[allow(deprecated)]
     pub fn new(name: String, columns: Vec<Column>) -> Self {
+        Self::new_with_owner(name, columns, "postgres".to_string())
+    }
+
+    /// Creates a new table with specified owner
+    #[must_use]
+    #[allow(deprecated)]
+    pub fn new_with_owner(name: String, columns: Vec<Column>, owner: String) -> Self {
         let mut sequences = HashMap::new();
 
         // Initialize sequences for SERIAL and BIGSERIAL columns
@@ -50,6 +59,7 @@ impl Table {
             columns,
             rows: Vec::new(),
             sequences,
+            owner,
         }
     }
 

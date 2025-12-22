@@ -20,6 +20,7 @@ pub use statement::{
     JoinType,
     JoinClause,
     PrivilegeType,
+    GrantObject,     // v2.3.0
     CaseExpression,  // v1.10.0
     WhenClause,      // v1.10.0
 };
@@ -31,7 +32,7 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
     let input = input.trim();
     let input = input.trim_end_matches(';');
 
-    // Split into two alt blocks due to nom's 21-element tuple limit
+    // Split into three alt blocks due to nom's 21-element tuple limit
     let result = alt((
         alt((
             meta::explain,  // v1.8.0 - must come before show_* to avoid conflicts
@@ -45,6 +46,10 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
             ddl::create_user,
             ddl::drop_user,
             ddl::alter_user,
+            ddl::create_role,  // v2.3.0
+            ddl::drop_role,    // v2.3.0
+            ddl::grant_role,   // v2.3.0 - must come before grant (database privilege)
+            ddl::revoke_role,  // v2.3.0 - must come before revoke (database privilege)
             ddl::create_database,
         )),
         alt((

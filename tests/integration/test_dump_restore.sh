@@ -1,5 +1,5 @@
 #!/bin/bash
-# Integration test for rustdb-dump and rustdb-restore
+# Integration test for postgrust-dump and postgrust-restore
 # Tests SQL and binary dump/restore round-trip
 
 set -e  # Exit on error
@@ -10,8 +10,8 @@ echo "======================================"
 echo
 
 # Build binaries
-echo "[1/7] Building rustdb-dump and rustdb-restore..."
-cargo build --release --bin rustdb-dump --bin rustdb-restore 2>/dev/null
+echo "[1/7] Building postgrust-dump and postgrust-restore..."
+cargo build --release --bin postgrust-dump --bin postgrust-restore 2>/dev/null
 echo "✓ Binaries built"
 echo
 
@@ -80,7 +80,7 @@ echo
 
 # Dump database (SQL format)
 echo "[4/7] Dumping database (SQL format)..."
-./target/release/rustdb-dump \
+./target/release/postgrust-dump \
     --data-dir "$TEST_DIR/original" \
     --output "$TEST_DIR/dump.sql" \
     postgres > /dev/null
@@ -89,7 +89,7 @@ echo
 
 # Dump database (Binary format)
 echo "[5/7] Dumping database (Binary format)..."
-./target/release/rustdb-dump \
+./target/release/postgrust-dump \
     --data-dir "$TEST_DIR/original" \
     --format binary \
     --output "$TEST_DIR/dump.bin" \
@@ -105,7 +105,7 @@ echo
 
 # Restore from SQL dump
 echo "[6/7] Restoring from SQL dump..."
-./target/release/rustdb-restore \
+./target/release/postgrust-restore \
     --data-dir "$TEST_DIR/restored_sql" \
     --input "$TEST_DIR/dump.sql" \
     postgres_restored 2>&1 | grep -E "completed|statements" || true
@@ -113,7 +113,7 @@ echo
 
 # Restore from Binary dump
 echo "[7/7] Restoring from Binary dump..."
-./target/release/rustdb-restore \
+./target/release/postgrust-restore \
     --data-dir "$TEST_DIR/restored_binary" \
     --format binary \
     --input "$TEST_DIR/dump.bin" \

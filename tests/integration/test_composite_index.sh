@@ -16,7 +16,7 @@ cargo build --release --quiet 2>/dev/null
 
 # Start server in background
 echo "Starting server..."
-cargo run --release > /tmp/rustdb_composite_test.log 2>&1 &
+cargo run --release > /tmp/postgrust_composite_test.log 2>&1 &
 SERVER_PID=$!
 sleep 3
 
@@ -24,7 +24,7 @@ if ps -p $SERVER_PID > /dev/null; then
     echo "✓ Server started (PID: $SERVER_PID)"
 else
     echo "✗ Failed to start server"
-    cat /tmp/rustdb_composite_test.log
+    cat /tmp/postgrust_composite_test.log
     exit 1
 fi
 

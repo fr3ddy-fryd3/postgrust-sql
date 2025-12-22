@@ -35,8 +35,8 @@ impl QueryExecutor {
     ) -> Result<QueryResult, DatabaseError> {
         match stmt {
             // DDL operations - delegate to DdlExecutor
-            Statement::CreateTable { name, columns } => {
-                DdlExecutor::create_table(db, name, columns, storage, Some(database_storage))
+            Statement::CreateTable { name, columns, owner } => {
+                DdlExecutor::create_table(db, name, columns, owner, storage, Some(database_storage))
             }
             Statement::DropTable { name } => DdlExecutor::drop_table(db, name, storage),
             Statement::AlterTable { name, operation } => {
@@ -203,6 +203,13 @@ impl QueryExecutor {
                     "User management commands should be handled at server level".to_string(),
                 ))
             }
+            // Role management commands - handled at server level
+            Statement::CreateRole { .. } | Statement::DropRole { .. }
+            | Statement::GrantRole { .. } | Statement::RevokeRole { .. } => {
+                Err(DatabaseError::ParseError(
+                    "Role management commands should be handled at server level".to_string(),
+                ))
+            }
             // Database management commands - handled at server level
             Statement::CreateDatabase { .. } | Statement::DropDatabase { .. } => {
                 Err(DatabaseError::ParseError(
@@ -324,6 +331,7 @@ mod tests {
                     foreign_key: None,
                 },
             ],
+            owner: None,
         };
         QueryExecutor::execute(db, create_stmt, None, tx_manager, storage, None).unwrap();
     }
@@ -360,7 +368,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 crate::parser::ColumnDef {
@@ -368,10 +376,11 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
             ],
+            owner: None,
         };
 
         let tx_manager = GlobalTransactionManager::new();
@@ -431,6 +440,7 @@ mod tests {
                     foreign_key: None,
                 },
             ],
+            owner: None,
         };
         QueryExecutor::execute(&mut db, create_stmt, None, &tx_manager, &mut storage, None).unwrap();
 

@@ -5,6 +5,7 @@ pub enum Statement {
     CreateTable {
         name: String,
         columns: Vec<ColumnDef>,
+        owner: Option<String>,  // v2.3.0: Table owner
     },
     DropTable {
         name: String,
@@ -69,6 +70,22 @@ pub enum Statement {
         username: String,
         password: String,
     },
+    // Role management
+    CreateRole {
+        role_name: String,
+        is_superuser: bool,
+    },
+    DropRole {
+        role_name: String,
+    },
+    GrantRole {
+        role_name: String,
+        to_user: String,
+    },
+    RevokeRole {
+        role_name: String,
+        from_user: String,
+    },
     // Database management
     CreateDatabase {
         name: String,
@@ -80,12 +97,12 @@ pub enum Statement {
     // Privileges
     Grant {
         privilege: PrivilegeType,
-        on_database: String,
+        on: GrantObject,  // v2.3.0: Database or Table
         to_user: String,
     },
     Revoke {
         privilege: PrivilegeType,
-        on_database: String,
+        on: GrantObject,  // v2.3.0: Database or Table
         from_user: String,
     },
     // Metadata queries
@@ -152,6 +169,7 @@ pub enum AlterTableOperation {
     DropColumn(String),
     RenameColumn { old_name: String, new_name: String },
     RenameTable(String),
+    OwnerTo(String),  // v2.3.0: ALTER TABLE ... OWNER TO new_owner
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -226,4 +244,11 @@ pub struct JoinClause {
     pub table: String,
     pub on_left: String,  // left_table.column
     pub on_right: String, // right_table.column
+}
+
+/// v2.3.0: Object type for GRANT/REVOKE
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantObject {
+    Database(String),
+    Table(String),
 }
