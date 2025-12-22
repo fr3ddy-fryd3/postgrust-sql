@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::table::Table;
+use super::table_metadata::TableMetadata;
 use super::error::DatabaseError;
 use crate::index::Index;
 
@@ -12,10 +13,12 @@ pub struct Database {
     #[serde(skip)] // Don't serialize indexes (rebuild on load)
     pub indexes: HashMap<String, Index>, // index_name -> Index (BTree or Hash)
     pub views: HashMap<String, String>, // view_name -> SQL query (v1.10.0)
+    /// v2.3.0: Table metadata (owner + privileges)
+    pub table_metadata: HashMap<String, TableMetadata>, // table_name -> TableMetadata
 }
 
 impl Database {
-    #[must_use] 
+    #[must_use]
     pub fn new(name: String) -> Self {
         Self {
             name,
@@ -23,6 +26,7 @@ impl Database {
             enums: HashMap::new(),
             indexes: HashMap::new(),
             views: HashMap::new(),
+            table_metadata: HashMap::new(),
         }
     }
 
@@ -43,6 +47,11 @@ impl Database {
         if self.tables.contains_key(&table.name) {
             return Err(DatabaseError::TableAlreadyExists(table.name));
         }
+
+        // v2.3.0: Create table metadata with owner
+        let metadata = TableMetadata::new(table.name.clone(), table.owner.clone());
+        self.table_metadata.insert(table.name.clone(), metadata);
+
         self.tables.insert(table.name.clone(), table);
         Ok(())
     }
@@ -60,6 +69,10 @@ impl Database {
         self.tables
             .remove(name)
             .ok_or_else(|| DatabaseError::TableNotFound(name.to_string()))?;
+
+        // v2.3.0: Remove table metadata
+        self.table_metadata.remove(name);
+
         Ok(())
     }
 }

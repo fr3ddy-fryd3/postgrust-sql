@@ -20,6 +20,7 @@ pub use statement::{
     JoinType,
     JoinClause,
     PrivilegeType,
+    GrantObject,     // v2.3.0
     CaseExpression,  // v1.10.0
     WhenClause,      // v1.10.0
 };

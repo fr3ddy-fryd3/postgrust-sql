@@ -97,12 +97,12 @@ pub enum Statement {
     // Privileges
     Grant {
         privilege: PrivilegeType,
-        on_database: String,
+        on: GrantObject,  // v2.3.0: Database or Table
         to_user: String,
     },
     Revoke {
         privilege: PrivilegeType,
-        on_database: String,
+        on: GrantObject,  // v2.3.0: Database or Table
         from_user: String,
     },
     // Metadata queries
@@ -244,4 +244,11 @@ pub struct JoinClause {
     pub table: String,
     pub on_left: String,  // left_table.column
     pub on_right: String, // right_table.column
+}
+
+/// v2.3.0: Object type for GRANT/REVOKE
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantObject {
+    Database(String),
+    Table(String),
 }

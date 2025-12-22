@@ -678,34 +678,51 @@ impl Server {
                                 // Privilege commands
                                 crate::parser::Statement::Grant {
                                     privilege,
-                                    on_database,
+                                    on,
                                     to_user,
                                 } => {
+                                    use crate::parser::GrantObject;
                                     let priv_type = Self::convert_privilege(&privilege);
-                                    match inst.get_database_metadata_mut(&on_database) {
-                                        Some(meta) => {
-                                            meta.grant(&to_user, priv_type);
+
+                                    let result = match on {
+                                        GrantObject::Database(db_name) => {
+                                            // Grant on database
+                                            inst.get_database_metadata_mut(&db_name)
+                                                .map(|meta| {
+                                                    meta.grant(&to_user, priv_type);
+                                                    format!("Granted {privilege:?} on database {db_name} to {to_user}")
+                                                })
+                                                .ok_or_else(|| format!("Database '{db_name}' not found"))
+                                        }
+                                        GrantObject::Table(table_name) => {
+                                            // Grant on table (v2.3.0)
+                                            inst.get_database_mut(&session.database_name)
+                                                .and_then(|db| db.table_metadata.get_mut(&table_name))
+                                                .map(|meta| {
+                                                    meta.grant(&to_user, priv_type);
+                                                    format!("Granted {privilege:?} on table {table_name} to {to_user}")
+                                                })
+                                                .ok_or_else(|| format!("Table '{table_name}' not found"))
+                                        }
+                                    };
+
+                                    match result {
+                                        Ok(_msg) => {
                                             let mut storage_guard = storage.lock().await;
-                                            if let Err(e) =
-                                                storage_guard.save_server_instance(&inst)
-                                            {
-                                                Message::error_response(&format!(
-                                                    "Failed to persist: {e}"
-                                                ))
-                                                .send(&mut writer)
-                                                .await?;
+                                            if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                                Message::error_response(&format!("Failed to persist: {e}"))
+                                                    .send(&mut writer)
+                                                    .await?;
                                             } else {
                                                 Message::command_complete("GRANT")
                                                     .send(&mut writer)
                                                     .await?;
                                             }
                                         }
-                                        None => {
-                                            Message::error_response(&format!(
-                                                "Database '{on_database}' not found"
-                                            ))
-                                            .send(&mut writer)
-                                            .await?;
+                                        Err(msg) => {
+                                            Message::error_response(&msg)
+                                                .send(&mut writer)
+                                                .await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE)
@@ -714,34 +731,51 @@ impl Server {
                                 }
                                 crate::parser::Statement::Revoke {
                                     privilege,
-                                    on_database,
+                                    on,
                                     from_user,
                                 } => {
+                                    use crate::parser::GrantObject;
                                     let priv_type = Self::convert_privilege(&privilege);
-                                    match inst.get_database_metadata_mut(&on_database) {
-                                        Some(meta) => {
-                                            meta.revoke(&from_user, &priv_type);
+
+                                    let result = match on {
+                                        GrantObject::Database(db_name) => {
+                                            // Revoke from database
+                                            inst.get_database_metadata_mut(&db_name)
+                                                .map(|meta| {
+                                                    meta.revoke(&from_user, &priv_type);
+                                                    format!("Revoked {privilege:?} on database {db_name} from {from_user}")
+                                                })
+                                                .ok_or_else(|| format!("Database '{db_name}' not found"))
+                                        }
+                                        GrantObject::Table(table_name) => {
+                                            // Revoke from table (v2.3.0)
+                                            inst.get_database_mut(&session.database_name)
+                                                .and_then(|db| db.table_metadata.get_mut(&table_name))
+                                                .map(|meta| {
+                                                    meta.revoke(&from_user, &priv_type);
+                                                    format!("Revoked {privilege:?} on table {table_name} from {from_user}")
+                                                })
+                                                .ok_or_else(|| format!("Table '{table_name}' not found"))
+                                        }
+                                    };
+
+                                    match result {
+                                        Ok(_msg) => {
                                             let mut storage_guard = storage.lock().await;
-                                            if let Err(e) =
-                                                storage_guard.save_server_instance(&inst)
-                                            {
-                                                Message::error_response(&format!(
-                                                    "Failed to persist: {e}"
-                                                ))
-                                                .send(&mut writer)
-                                                .await?;
+                                            if let Err(e) = storage_guard.save_server_instance(&inst) {
+                                                Message::error_response(&format!("Failed to persist: {e}"))
+                                                    .send(&mut writer)
+                                                    .await?;
                                             } else {
                                                 Message::command_complete("REVOKE")
                                                     .send(&mut writer)
                                                     .await?;
                                             }
                                         }
-                                        None => {
-                                            Message::error_response(&format!(
-                                                "Database '{on_database}' not found"
-                                            ))
-                                            .send(&mut writer)
-                                            .await?;
+                                        Err(msg) => {
+                                            Message::error_response(&msg)
+                                                .send(&mut writer)
+                                                .await?;
                                         }
                                     }
                                     Message::ready_for_query(transaction_status::IDLE)

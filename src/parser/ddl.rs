@@ -189,31 +189,57 @@ pub fn privilege_type(input: &str) -> IResult<&str, PrivilegeType> {
 }
 
 pub fn grant(input: &str) -> IResult<&str, Statement> {
+    use super::statement::GrantObject;
+
     let (input, _) = ws(tag_no_case("GRANT"))(input)?;
     let (input, privilege) = ws(privilege_type)(input)?;
-    let (input, _) = ws(tag_no_case("ON DATABASE"))(input)?;
-    let (input, db_name) = ws(identifier)(input)?;
+
+    // Parse ON DATABASE or ON TABLE
+    let (input, on) = alt((
+        map(
+            preceded(ws(tag_no_case("ON TABLE")), ws(identifier)),
+            GrantObject::Table
+        ),
+        map(
+            preceded(ws(tag_no_case("ON DATABASE")), ws(identifier)),
+            GrantObject::Database
+        ),
+    ))(input)?;
+
     let (input, _) = ws(tag_no_case("TO"))(input)?;
     let (input, username) = ws(identifier)(input)?;
 
     Ok((input, Statement::Grant {
         privilege,
-        on_database: db_name,
+        on,
         to_user: username,
     }))
 }
 
 pub fn revoke(input: &str) -> IResult<&str, Statement> {
+    use super::statement::GrantObject;
+
     let (input, _) = ws(tag_no_case("REVOKE"))(input)?;
     let (input, privilege) = ws(privilege_type)(input)?;
-    let (input, _) = ws(tag_no_case("ON DATABASE"))(input)?;
-    let (input, db_name) = ws(identifier)(input)?;
+
+    // Parse ON DATABASE or ON TABLE
+    let (input, on) = alt((
+        map(
+            preceded(ws(tag_no_case("ON TABLE")), ws(identifier)),
+            GrantObject::Table
+        ),
+        map(
+            preceded(ws(tag_no_case("ON DATABASE")), ws(identifier)),
+            GrantObject::Database
+        ),
+    ))(input)?;
+
     let (input, _) = ws(tag_no_case("FROM"))(input)?;
     let (input, username) = ws(identifier)(input)?;
 
     Ok((input, Statement::Revoke {
         privilege,
-        on_database: db_name,
+        on,
         from_user: username,
     }))
 }

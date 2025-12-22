@@ -11,6 +11,7 @@ pub mod privilege;
 pub mod user;
 pub mod role;
 pub mod database_metadata;
+pub mod table_metadata;
 pub mod server_instance;
 
 // Re-exports for convenience
@@ -26,6 +27,7 @@ pub use privilege::Privilege;
 pub use user::User;
 pub use role::Role;
 pub use database_metadata::DatabaseMetadata;
+pub use table_metadata::TableMetadata;
 pub use server_instance::ServerInstance;
 
 #[cfg(test)]
