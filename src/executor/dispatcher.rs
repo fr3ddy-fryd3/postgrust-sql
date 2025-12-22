@@ -331,6 +331,7 @@ mod tests {
                     foreign_key: None,
                 },
             ],
+            owner: None,
         };
         QueryExecutor::execute(db, create_stmt, None, tx_manager, storage, None).unwrap();
     }
@@ -367,7 +368,7 @@ mod tests {
                     data_type: DataType::Integer,
                     nullable: false,
                     primary_key: true,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
                 crate::parser::ColumnDef {
@@ -375,10 +376,11 @@ mod tests {
                     data_type: DataType::Text,
                     nullable: false,
                     primary_key: false,
-                unique: false,
+                    unique: false,
                     foreign_key: None,
                 },
             ],
+            owner: None,
         };
 
         let tx_manager = GlobalTransactionManager::new();
@@ -438,6 +440,7 @@ mod tests {
                     foreign_key: None,
                 },
             ],
+            owner: None,
         };
         QueryExecutor::execute(&mut db, create_stmt, None, &tx_manager, &mut storage, None).unwrap();
 
