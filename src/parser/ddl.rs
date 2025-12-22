@@ -62,7 +62,7 @@ pub fn create_table(input: &str) -> IResult<&str, Statement> {
         ws(char(')')),
     )(input)?;
 
-    Ok((input, Statement::CreateTable { name, columns }))
+    Ok((input, Statement::CreateTable { name, columns, owner: None }))
 }
 
 pub fn drop_table(input: &str) -> IResult<&str, Statement> {
@@ -129,6 +129,50 @@ pub fn alter_user(input: &str) -> IResult<&str, Statement> {
     Ok((input, Statement::AlterUser {
         username,
         password,
+    }))
+}
+
+pub fn create_role(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("CREATE ROLE"))(input)?;
+    let (input, role_name) = ws(identifier)(input)?;
+    let (input, is_superuser) = opt(ws(tag_no_case("SUPERUSER")))(input)?;
+
+    Ok((input, Statement::CreateRole {
+        role_name,
+        is_superuser: is_superuser.is_some(),
+    }))
+}
+
+pub fn drop_role(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("DROP ROLE"))(input)?;
+    let (input, role_name) = ws(identifier)(input)?;
+
+    Ok((input, Statement::DropRole {
+        role_name,
+    }))
+}
+
+pub fn grant_role(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("GRANT"))(input)?;
+    let (input, role_name) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("TO"))(input)?;
+    let (input, username) = ws(identifier)(input)?;
+
+    Ok((input, Statement::GrantRole {
+        role_name,
+        to_user: username,
+    }))
+}
+
+pub fn revoke_role(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = ws(tag_no_case("REVOKE"))(input)?;
+    let (input, role_name) = ws(identifier)(input)?;
+    let (input, _) = ws(tag_no_case("FROM"))(input)?;
+    let (input, username) = ws(identifier)(input)?;
+
+    Ok((input, Statement::RevokeRole {
+        role_name,
+        from_user: username,
     }))
 }
 

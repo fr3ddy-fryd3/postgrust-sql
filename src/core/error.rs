@@ -20,6 +20,10 @@ pub enum DatabaseError {
     UserNotFound(String),
     #[error("User '{0}' already exists")]
     UserAlreadyExists(String),
+    #[error("Role '{0}' not found")]
+    RoleNotFound(String),
+    #[error("Role '{0}' already exists")]
+    RoleAlreadyExists(String),
     #[error("Authentication failed")]
     AuthenticationFailed,
     #[error("Permission denied: {0}")]

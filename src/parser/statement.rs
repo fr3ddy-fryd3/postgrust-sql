@@ -5,6 +5,7 @@ pub enum Statement {
     CreateTable {
         name: String,
         columns: Vec<ColumnDef>,
+        owner: Option<String>,  // v2.3.0: Table owner
     },
     DropTable {
         name: String,
@@ -68,6 +69,22 @@ pub enum Statement {
     AlterUser {
         username: String,
         password: String,
+    },
+    // Role management
+    CreateRole {
+        role_name: String,
+        is_superuser: bool,
+    },
+    DropRole {
+        role_name: String,
+    },
+    GrantRole {
+        role_name: String,
+        to_user: String,
+    },
+    RevokeRole {
+        role_name: String,
+        from_user: String,
     },
     // Database management
     CreateDatabase {

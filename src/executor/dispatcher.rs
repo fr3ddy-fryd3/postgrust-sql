@@ -35,8 +35,8 @@ impl QueryExecutor {
     ) -> Result<QueryResult, DatabaseError> {
         match stmt {
             // DDL operations - delegate to DdlExecutor
-            Statement::CreateTable { name, columns } => {
-                DdlExecutor::create_table(db, name, columns, storage, Some(database_storage))
+            Statement::CreateTable { name, columns, owner } => {
+                DdlExecutor::create_table(db, name, columns, owner, storage, Some(database_storage))
             }
             Statement::DropTable { name } => DdlExecutor::drop_table(db, name, storage),
             Statement::AlterTable { name, operation } => {
@@ -201,6 +201,13 @@ impl QueryExecutor {
             Statement::CreateUser { .. } | Statement::DropUser { .. } | Statement::AlterUser { .. } => {
                 Err(DatabaseError::ParseError(
                     "User management commands should be handled at server level".to_string(),
+                ))
+            }
+            // Role management commands - handled at server level
+            Statement::CreateRole { .. } | Statement::DropRole { .. }
+            | Statement::GrantRole { .. } | Statement::RevokeRole { .. } => {
+                Err(DatabaseError::ParseError(
+                    "Role management commands should be handled at server level".to_string(),
                 ))
             }
             // Database management commands - handled at server level

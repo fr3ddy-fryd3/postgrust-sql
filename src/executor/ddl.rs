@@ -18,6 +18,7 @@ impl DdlExecutor {
         db: &mut Database,
         name: String,
         column_defs: Vec<ColumnDef>,
+        owner: Option<String>,  // v2.3.0: Table owner
         storage: Option<&mut StorageEngine>,
         database_storage: Option<&mut crate::storage::DatabaseStorage>,
     ) -> Result<QueryResult, DatabaseError> {
@@ -80,7 +81,8 @@ impl DdlExecutor {
         }
 
         // Create table with columns (metadata always in Database)
-        let table = Table::new(name.clone(), columns);
+        let table_owner = owner.unwrap_or_else(|| "postgres".to_string());
+        let table = Table::new_with_owner(name.clone(), columns, table_owner);
 
         if let Some(db_storage) = database_storage {
             // Page-based storage: create PagedTable for data

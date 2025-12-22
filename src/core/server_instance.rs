@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use super::database::Database;
 use super::database_metadata::DatabaseMetadata;
 use super::user::User;
+use super::role::Role;
 use super::privilege::Privilege;
 use super::error::DatabaseError;
 
@@ -15,15 +16,18 @@ pub struct ServerInstance {
     pub database_metadata: HashMap<String, DatabaseMetadata>,
     /// Все пользователи: username -> User
     pub users: HashMap<String, User>,
+    /// Все роли: role_name -> Role
+    pub roles: HashMap<String, Role>,
 }
 
 impl ServerInstance {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             databases: HashMap::new(),
             database_metadata: HashMap::new(),
             users: HashMap::new(),
+            roles: HashMap::new(),
         }
     }
 
@@ -129,7 +133,111 @@ impl ServerInstance {
         }
     }
 
-    /// Проверяет, есть ли у пользователя право на БД
+    /// Создает роль
+    pub fn create_role(&mut self, role_name: &str, is_superuser: bool) -> Result<(), DatabaseError> {
+        if self.roles.contains_key(role_name) {
+            return Err(DatabaseError::RoleAlreadyExists(role_name.to_string()));
+        }
+        let role = Role::new(role_name.to_string(), is_superuser);
+        self.roles.insert(role_name.to_string(), role);
+        Ok(())
+    }
+
+    /// Удаляет роль
+    pub fn drop_role(&mut self, role_name: &str) -> Result<(), DatabaseError> {
+        if !self.roles.contains_key(role_name) {
+            return Err(DatabaseError::RoleNotFound(role_name.to_string()));
+        }
+
+        // Удаляем роль у всех пользователей
+        for user in self.users.values_mut() {
+            user.remove_role(role_name);
+        }
+
+        // Удаляем из наследования других ролей
+        for role in self.roles.values_mut() {
+            role.remove_parent_role(role_name);
+            role.remove_member(role_name);
+        }
+
+        self.roles.remove(role_name);
+        Ok(())
+    }
+
+    /// Выдает роль пользователю (GRANT role TO user)
+    pub fn grant_role_to_user(&mut self, role_name: &str, username: &str) -> Result<(), DatabaseError> {
+        if !self.roles.contains_key(role_name) {
+            return Err(DatabaseError::RoleNotFound(role_name.to_string()));
+        }
+        if !self.users.contains_key(username) {
+            return Err(DatabaseError::UserNotFound(username.to_string()));
+        }
+
+        // Добавляем роль пользователю
+        if let Some(user) = self.users.get_mut(username) {
+            user.add_role(role_name);
+        }
+
+        // Добавляем пользователя в члены роли
+        if let Some(role) = self.roles.get_mut(role_name) {
+            role.add_member(username);
+        }
+
+        Ok(())
+    }
+
+    /// Отбирает роль у пользователя (REVOKE role FROM user)
+    pub fn revoke_role_from_user(&mut self, role_name: &str, username: &str) -> Result<(), DatabaseError> {
+        if !self.roles.contains_key(role_name) {
+            return Err(DatabaseError::RoleNotFound(role_name.to_string()));
+        }
+        if !self.users.contains_key(username) {
+            return Err(DatabaseError::UserNotFound(username.to_string()));
+        }
+
+        // Удаляем роль у пользователя
+        if let Some(user) = self.users.get_mut(username) {
+            user.remove_role(role_name);
+        }
+
+        // Удаляем пользователя из членов роли
+        if let Some(role) = self.roles.get_mut(role_name) {
+            role.remove_member(username);
+        }
+
+        Ok(())
+    }
+
+    /// Получает все роли пользователя (включая наследуемые)
+    pub fn get_user_roles(&self, username: &str) -> HashSet<String> {
+        let mut all_roles = HashSet::new();
+
+        if let Some(user) = self.users.get(username) {
+            // Добавляем прямые роли
+            for role_name in &user.roles {
+                self.collect_roles_recursive(role_name, &mut all_roles);
+            }
+        }
+
+        all_roles
+    }
+
+    /// Рекурсивно собирает все роли (включая наследуемые)
+    fn collect_roles_recursive(&self, role_name: &str, collected: &mut HashSet<String>) {
+        if collected.contains(role_name) {
+            return; // Избегаем циклов
+        }
+
+        collected.insert(role_name.to_string());
+
+        if let Some(role) = self.roles.get(role_name) {
+            for parent_role in &role.member_of {
+                self.collect_roles_recursive(parent_role, collected);
+            }
+        }
+    }
+
+    /// Проверяет, есть ли у пользователя право на БД (с учетом ролей)
     pub fn check_privilege(&self, username: &str, db_name: &str, privilege: &Privilege) -> Result<bool, DatabaseError> {
         // Суперпользователь имеет все права
         if let Some(user) = self.users.get(username)
@@ -137,9 +245,28 @@ impl ServerInstance {
                 return Ok(true);
             }
 
-        // Проверяем права в метаданных БД
+        // Проверяем права в метаданных БД для пользователя
         if let Some(db_meta) = self.database_metadata.get(db_name) {
-            Ok(db_meta.has_privilege(username, privilege))
+            if db_meta.has_privilege(username, privilege) {
+                return Ok(true);
+            }
+
+            // Проверяем права через роли
+            let user_roles = self.get_user_roles(username);
+            for role_name in user_roles {
+                // Проверяем, есть ли у роли суперправа
+                if let Some(role) = self.roles.get(&role_name) {
+                    if role.is_superuser {
+                        return Ok(true);
+                    }
+                }
+                // Проверяем права роли в БД
+                if db_meta.has_privilege(&role_name, privilege) {
+                    return Ok(true);
+                }
+            }
+
+            Ok(false)
         } else {
             Err(DatabaseError::DatabaseNotFound(db_name.to_string()))
         }

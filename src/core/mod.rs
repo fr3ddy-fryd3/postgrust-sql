@@ -9,6 +9,7 @@ pub mod table;
 pub mod database;
 pub mod privilege;
 pub mod user;
+pub mod role;
 pub mod database_metadata;
 pub mod server_instance;
 
@@ -23,6 +24,7 @@ pub use table::Table;
 pub use database::Database;
 pub use privilege::Privilege;
 pub use user::User;
+pub use role::Role;
 pub use database_metadata::DatabaseMetadata;
 pub use server_instance::ServerInstance;
 

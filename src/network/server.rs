@@ -504,6 +504,119 @@ impl Server {
                                         .send(&mut writer)
                                         .await?;
                                 }
+                                // Role management commands
+                                crate::parser::Statement::CreateRole { role_name, is_superuser } => {
+                                    match inst.create_role(&role_name, is_superuser) {
+                                        Ok(()) => {
+                                            let mut storage_guard = storage.lock().await;
+                                            if let Err(e) =
+                                                storage_guard.save_server_instance(&inst)
+                                            {
+                                                Message::error_response(&format!(
+                                                    "Failed to persist: {e}"
+                                                ))
+                                                .send(&mut writer)
+                                                .await?;
+                                            } else {
+                                                Message::command_complete("CREATE ROLE")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            Message::error_response(&format!("{e}"))
+                                                .send(&mut writer)
+                                                .await?;
+                                        }
+                                    }
+                                    Message::ready_for_query(transaction_status::IDLE)
+                                        .send(&mut writer)
+                                        .await?;
+                                }
+                                crate::parser::Statement::DropRole { role_name } => {
+                                    match inst.drop_role(&role_name) {
+                                        Ok(()) => {
+                                            let mut storage_guard = storage.lock().await;
+                                            if let Err(e) =
+                                                storage_guard.save_server_instance(&inst)
+                                            {
+                                                Message::error_response(&format!(
+                                                    "Failed to persist: {e}"
+                                                ))
+                                                .send(&mut writer)
+                                                .await?;
+                                            } else {
+                                                Message::command_complete("DROP ROLE")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            Message::error_response(&format!("{e}"))
+                                                .send(&mut writer)
+                                                .await?;
+                                        }
+                                    }
+                                    Message::ready_for_query(transaction_status::IDLE)
+                                        .send(&mut writer)
+                                        .await?;
+                                }
+                                crate::parser::Statement::GrantRole { role_name, to_user } => {
+                                    match inst.grant_role_to_user(&role_name, &to_user) {
+                                        Ok(()) => {
+                                            let mut storage_guard = storage.lock().await;
+                                            if let Err(e) =
+                                                storage_guard.save_server_instance(&inst)
+                                            {
+                                                Message::error_response(&format!(
+                                                    "Failed to persist: {e}"
+                                                ))
+                                                .send(&mut writer)
+                                                .await?;
+                                            } else {
+                                                Message::command_complete("GRANT")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            Message::error_response(&format!("{e}"))
+                                                .send(&mut writer)
+                                                .await?;
+                                        }
+                                    }
+                                    Message::ready_for_query(transaction_status::IDLE)
+                                        .send(&mut writer)
+                                        .await?;
+                                }
+                                crate::parser::Statement::RevokeRole { role_name, from_user } => {
+                                    match inst.revoke_role_from_user(&role_name, &from_user) {
+                                        Ok(()) => {
+                                            let mut storage_guard = storage.lock().await;
+                                            if let Err(e) =
+                                                storage_guard.save_server_instance(&inst)
+                                            {
+                                                Message::error_response(&format!(
+                                                    "Failed to persist: {e}"
+                                                ))
+                                                .send(&mut writer)
+                                                .await?;
+                                            } else {
+                                                Message::command_complete("REVOKE")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            Message::error_response(&format!("{e}"))
+                                                .send(&mut writer)
+                                                .await?;
+                                        }
+                                    }
+                                    Message::ready_for_query(transaction_status::IDLE)
+                                        .send(&mut writer)
+                                        .await?;
+                                }
                                 // Database management commands
                                 crate::parser::Statement::CreateDatabase { name, owner } => {
                                     let owner = owner.unwrap_or_else(|| session.username.clone());
