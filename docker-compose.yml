@@ -1,15 +1,15 @@
 version: '3.8'
 
 services:
-  rustdb:
+  postgrust:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rustdb-server
+    container_name: postgrust-server
     ports:
       - "5432:5432"
     volumes:
-      - rustdb-data:/app/data
+      - postgrust-data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/5432' || exit 1"]
@@ -19,5 +19,5 @@ services:
       start_period: 10s
 
 volumes:
-  rustdb-data:
+  postgrust-data:
     driver: local

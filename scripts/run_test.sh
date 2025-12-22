@@ -22,7 +22,7 @@ echo ""
 
 # Запустить сервер в фоне
 echo "3. Запуск сервера..."
-cargo run --release > /tmp/rustdb_server.log 2>&1 &
+cargo run --release > /tmp/postgrust_server.log 2>&1 &
 SERVER_PID=$!
 sleep 3
 echo "   ✓ Сервер запущен (PID: $SERVER_PID)"

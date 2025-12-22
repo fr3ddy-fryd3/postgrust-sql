@@ -305,7 +305,7 @@ QUERY PLAN
 ### PostgreSQL Protocol
 - Auto-detection (peek first 8 bytes)
 - Messages: StartupMessage, Query, RowDescription, DataRow, etc.
-- Test: `psql -h 127.0.0.1 -p 5432 -U rustdb -d main`
+- Test: `psql -h 127.0.0.1 -p 5432 -U postgrust -d main`
 
 ## Testing
 
@@ -366,7 +366,7 @@ Allowed lints (configured in `src/lib.rs`):
 
 **v2.2.2 Changes:**
 - 🔧 Fixed Dockerfile binary naming (postgrustql → postgrustsql)
-- 🔧 Fixed Dockerfile user (rustdb → postgres)
+- 🔧 Fixed Docker user naming (rustdb → postgrust)
 - 📝 Minor improvements and code cleanup
 
 **v2.2.0 Changes:**

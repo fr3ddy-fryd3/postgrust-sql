@@ -129,7 +129,7 @@ GRANT SELECT ON TABLE orders TO alice;  // Grant access
 
 ### Fixed Issues:
 1. ✅ **Dockerfile binary naming** - Fixed incorrect binary name `postgrustql` → `postgrustsql`
-2. ✅ **Dockerfile user** - Changed user from `rustdb` → `postgres` for consistency
+2. ✅ **Docker user naming** - Changed user from `rustdb` → `postgrust` for consistency
 3. ✅ **Minor improvements** - Code cleanup and optimizations
 
 ### Changes:
@@ -374,7 +374,7 @@ pg_database_size(name) -- Returns database size
 
 ### psql Connectivity Verified:
 ```bash
-psql -h 127.0.0.1 -p 5432 -U rustdb -d main
+psql -h 127.0.0.1 -p 5432 -U postgrust -d main
 # Works! Authentication flow compatible
 \d          # Shows tables
 \dt         # Shows tables

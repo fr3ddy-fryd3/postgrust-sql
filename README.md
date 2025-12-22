@@ -25,10 +25,15 @@ cargo run --release
 cargo run --example cli
 ```
 
-## Возможности (v2.2.0)
+## Возможности (v2.3.0)
 
 ### Основное
 - **SQL запросы**: CREATE/DROP TABLE/VIEW, INSERT, SELECT, UPDATE, DELETE, SHOW TABLES
+- **Role-Based Access Control** (v2.3.0): Роли, владение таблицами, права доступа
+  - CREATE/DROP ROLE, GRANT/REVOKE роли
+  - Автоматическое владение таблицами (owner = создатель)
+  - Табличные привилегии (GRANT/REVOKE SELECT/INSERT/UPDATE/DELETE ON TABLE)
+  - ALTER TABLE OWNER TO для смены владельца
 - **Multi-Connection Transaction Isolation** (v2.1.0): DML изолирован между connections
 - **Backup & Restore** (v2.2.0): pgr_dump/pgr_restore утилиты (SQL + binary форматы)
 - **MVCC (Multi-Version Concurrency Control)**: изоляция с версионированием строк (xmin/xmax)
@@ -62,15 +67,19 @@ cargo run --example cli
 - **Составные индексы**: поддержка multi-column индексов
 - **Foreign Keys**: поддержка внешних ключей
 
-## Архитектура (v2.0.2)
+## Архитектура (v2.3.0)
 
-**Модульная структура** (~2400 строк кода, чистый код после v2.0.0 cleanup):
+**Модульная структура** (~2700 строк кода, добавлен RBAC в v2.3.0):
 
 ```
-rustdb/
+postgrustsql/
 ├── src/
 │   ├── main.rs             # Точка входа сервера
 │   ├── core/               # Базовые типы (Database, Table, Row, Value, Column)
+│   │   ├── role.rs         # (v2.3.0) Роли и иерархия
+│   │   ├── table_metadata.rs  # (v2.3.0) Права доступа к таблицам
+│   │   ├── server_instance.rs # Управление ролями и проверка прав
+│   │   └── ...
 │   ├── parser/             # SQL парсер (nom) - ddl.rs, dml.rs, queries.rs
 │   ├── executor/           # Модульный исполнитель
 │   │   ├── storage_adapter.rs  # RowStorage trait (Vec<Row> | PagedTable)
@@ -81,11 +90,12 @@ rustdb/
 │   │   ├── vacuum.rs          # VACUUM cleanup
 │   │   ├── index.rs           # CREATE/DROP INDEX
 │   │   ├── explain.rs         # EXPLAIN analyzer
-│   │   └── dispatcher.rs      # Query dispatcher (146 строк, v2.0.0: renamed from legacy.rs)
+│   │   ├── system_catalogs.rs # (v2.0.0) pg_catalog.*, information_schema.*
+│   │   └── dispatcher.rs      # Query dispatcher
 │   ├── index/              # B-tree & Hash индексы (single & composite)
-│   ├── transaction/        # TransactionManager, Snapshot
+│   ├── transaction/        # TransactionManager, Snapshot, GlobalTransactionManager
 │   ├── storage/            # Binary save/load, WAL, Page-based storage
-│   └── network/            # TCP server, PostgreSQL protocol
+│   └── network/            # TCP server, PostgreSQL protocol, permission enforcement
 └── examples/
     ├── client.rs           # Автоматический клиент
     └── cli.rs              # Интерактивный CLI клиент
@@ -103,17 +113,17 @@ docker-compose up -d
 docker-compose ps
 
 # Посмотреть логи
-docker-compose logs -f rustdb
+docker-compose logs -f postgrust
 
 # Подключиться к серверу
 nc localhost 5432
 # или
 telnet localhost 5432
 # или через PostgreSQL клиент
-psql -h localhost -p 5432 -U rustdb -d main
+psql -h localhost -p 5432 -U postgrust -d main
 
 # Выполнить команду внутри контейнера
-docker-compose exec rustdb /app/postgrustql --help
+docker-compose exec postgrust /app/postgrustsql --help
 
 # Остановить
 docker-compose down
@@ -131,7 +141,7 @@ docker-compose up -d
 #### Сборка проекта
 
 ```bash
-cd rustdb
+cd postgrustsql
 cargo build --release
 ```
 
@@ -247,6 +257,48 @@ SELECT pg_table_size('users');
 SELECT pg_database_size('main');
 ```
 
+### Role-Based Access Control (v2.3.0)
+
+```sql
+-- Создание ролей
+CREATE ROLE admin WITH SUPERUSER;
+CREATE ROLE developer;
+CREATE ROLE readonly;
+
+-- Удаление роли
+DROP ROLE readonly;
+
+-- Назначение роли пользователю
+GRANT admin TO alice;
+GRANT developer TO bob;
+
+-- Отзыв роли
+REVOKE developer FROM bob;
+
+-- Управление правами на таблицы
+GRANT SELECT ON TABLE users TO alice;
+GRANT INSERT, UPDATE ON TABLE users TO bob;
+GRANT ALL ON TABLE orders TO admin;
+
+-- Отзыв прав
+REVOKE UPDATE ON TABLE users FROM bob;
+REVOKE ALL ON TABLE orders FROM admin;
+
+-- Смена владельца таблицы
+ALTER TABLE users OWNER TO alice;
+
+-- Проверка прав (автоматически)
+SELECT * FROM users;  -- Требует SELECT или быть владельцем
+INSERT INTO users (name) VALUES ('Charlie');  -- Требует INSERT или быть владельцем
+UPDATE users SET age = 25;  -- Требует UPDATE или быть владельцем
+DELETE FROM users WHERE id = 1;  -- Требует DELETE или быть владельцем
+```
+
+**Иерархия прав:**
+- **Superuser** - полный доступ ко всем таблицам
+- **Owner** - полный доступ к своим таблицам
+- **Granted privileges** - конкретные права (SELECT/INSERT/UPDATE/DELETE)
+
 ## Поддерживаемые типы данных (23 типа)
 
 **Числовые:**
@@ -331,7 +383,7 @@ ROLLBACK;
 
 ```bash
 # Стандартный PostgreSQL клиент (рекомендуется)
-psql -h 127.0.0.1 -p 5432 -U rustdb -d main
+psql -h 127.0.0.1 -p 5432 -U postgrust -d main
 # Пароль: любой (authentication в v2.0.0)
 
 # Использование meta-команд
@@ -374,7 +426,7 @@ nc 127.0.0.1 5432
 - **uuid 1.6** - UUID тип
 - **rust_decimal 1.33** - NUMERIC тип с точностью
 
-## PostgreSQL Совместимость (v2.0.0+)
+## PostgreSQL Совместимость (v2.3.0)
 
 ### ✅ Поддерживается
 - PostgreSQL wire protocol (порт 5432)
@@ -383,21 +435,23 @@ nc 127.0.0.1 5432
 - System catalogs (pg_catalog.*, information_schema.*)
 - System functions (version(), current_database(), pg_*_size())
 - Meta-команды psql (\dt, \d, \di, \l)
+- RBAC (CREATE/DROP ROLE, GRANT/REVOKE роли и привилегии)
+- Table ownership и контроль доступа
 
 ### ⚠️ Ограничения
-- Транзакции работают только в пределах одного подключения (planned v2.1.0)
 - Один JOIN на запрос (множественные JOIN planned)
 - WHERE с JOIN не полностью поддерживается
 - Составные индексы требуют точного совпадения всех колонок
 - Hash индексы только для = (B-tree для диапазонов)
 - Extended Query Protocol (prepared statements) пока не поддерживается
+- DDL операции (CREATE/DROP/ALTER TABLE) auto-commit даже внутри транзакций
 
 ## Разработка
 
 ### Запуск тестов
 
 ```bash
-# Юнит-тесты (159 тестов, все проходят ✅ v2.0.2)
+# Юнит-тесты (191 тестов, все проходят ✅ v2.3.0)
 cargo test
 
 # Интеграционные тесты

@@ -7,7 +7,7 @@ echo
 
 # Build
 echo "[1] Building..."
-cargo build --release --bin postgrustql --bin rustdb-dump --bin rustdb-restore 2>/dev/null
+cargo build --release --bin postgrustql --bin postgrust-dump --bin postgrust-restore 2>/dev/null
 echo "✓ Built"
 
 # Cleanup
@@ -38,7 +38,7 @@ echo "✓ Server stopped"
 
 # Dump database
 echo "[4] Dumping database..."
-./target/release/rustdb-dump \
+./target/release/postgrust-dump \
     --data-dir "$TEST_DIR/original" \
     --output "$TEST_DIR/dump.sql" \
     postgres
@@ -54,7 +54,7 @@ echo
 # Restore database
 echo "[5] Restoring database..."
 mkdir -p "$TEST_DIR/restored"
-./target/release/rustdb-restore \
+./target/release/postgrust-restore \
     --data-dir "$TEST_DIR/restored" \
     --input "$TEST_DIR/dump.sql" \
     postgres_restored
