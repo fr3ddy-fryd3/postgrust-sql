@@ -837,6 +837,47 @@ impl Server {
                                 }
                                 // Regular table operations need database access
                                 other_stmt => {
+                                    // v2.3.0: First transform CREATE TABLE to add owner before permission check
+                                    let stmt_with_owner_early = match other_stmt {
+                                        crate::parser::Statement::CreateTable { name, columns, owner: None } => {
+                                            crate::parser::Statement::CreateTable {
+                                                name,
+                                                columns,
+                                                owner: Some(session.username.clone()),
+                                            }
+                                        }
+                                        other => other,
+                                    };
+
+                                    // v2.3.0: Check permissions BEFORE getting mutable database reference
+                                    // This avoids borrow checker issues
+                                    let needs_permission_check = matches!(
+                                        stmt_with_owner_early,
+                                        crate::parser::Statement::Select { .. }
+                                            | crate::parser::Statement::Insert { .. }
+                                            | crate::parser::Statement::Update { .. }
+                                            | crate::parser::Statement::Delete { .. }
+                                            | crate::parser::Statement::AlterTable { .. }
+                                            | crate::parser::Statement::DropTable { .. }
+                                    );
+
+                                    if needs_permission_check {
+                                        if let Some(err_msg) = Self::check_statement_permissions(
+                                            &inst,
+                                            &session.database_name,
+                                            &session.username,
+                                            &stmt_with_owner_early,
+                                        ) {
+                                            Message::error_response(&err_msg)
+                                                .send(&mut writer)
+                                                .await?;
+                                            Message::ready_for_query(transaction_status::IDLE)
+                                                .send(&mut writer)
+                                                .await?;
+                                            continue;
+                                        }
+                                    }
+
                                     // Получаем текущую БД из сессии
                                     let db = if let Some(db) =
                                         inst.get_database_mut(&session.database_name)
@@ -855,7 +896,7 @@ impl Server {
                                         continue;
                                     };
 
-                                    match other_stmt {
+                                    match stmt_with_owner_early {
                                         crate::parser::Statement::Begin => {
                                             if transaction.is_active() {
                                                 Message::error_response(
@@ -940,21 +981,10 @@ impl Server {
                                                 .expect("v2.0.0: database_storage is required");
                                             let mut db_storage_guard = db_storage.lock().await;
 
-                                            // v2.3.0: Set owner for CREATE TABLE from current session
-                                            let stmt_with_owner = match other_stmt {
-                                                crate::parser::Statement::CreateTable { name, columns, owner: None } => {
-                                                    crate::parser::Statement::CreateTable {
-                                                        name,
-                                                        columns,
-                                                        owner: Some(session.username.clone()),
-                                                    }
-                                                }
-                                                other => other,
-                                            };
-
+                                            // Permission checks already done earlier
                                             match QueryExecutor::execute(
                                                 db,
-                                                stmt_with_owner,
+                                                stmt_with_owner_early,
                                                 storage_option,
                                                 &tx_manager,
                                                 &mut db_storage_guard,
@@ -1298,5 +1328,85 @@ impl Server {
             crate::parser::PrivilegeType::Delete => crate::types::Privilege::Delete,
             crate::parser::PrivilegeType::All => crate::types::Privilege::All,
         }
+    }
+
+    /// v2.3.0: Check permissions for a statement before execution
+    ///
+    /// Returns None if permission is granted, Some(error_message) if denied
+    fn check_statement_permissions(
+        instance: &ServerInstance,
+        db_name: &str,
+        username: &str,
+        stmt: &crate::parser::Statement,
+    ) -> Option<String> {
+        use crate::parser::Statement;
+        use crate::types::Privilege;
+
+        match stmt {
+            // SELECT - check SELECT privilege
+            Statement::Select { from, .. } => {
+                if !instance.check_table_permission(username, db_name, from, &Privilege::Select) {
+                    return Some(format!(
+                        "Permission denied: User '{}' does not have SELECT privilege on table '{}'",
+                        username, from
+                    ));
+                }
+            }
+
+            // INSERT - check INSERT privilege
+            Statement::Insert { table, .. } => {
+                if !instance.check_table_permission(username, db_name, table, &Privilege::Insert) {
+                    return Some(format!(
+                        "Permission denied: User '{}' does not have INSERT privilege on table '{}'",
+                        username, table
+                    ));
+                }
+            }
+
+            // UPDATE - check UPDATE privilege
+            Statement::Update { table, .. } => {
+                if !instance.check_table_permission(username, db_name, table, &Privilege::Update) {
+                    return Some(format!(
+                        "Permission denied: User '{}' does not have UPDATE privilege on table '{}'",
+                        username, table
+                    ));
+                }
+            }
+
+            // DELETE - check DELETE privilege
+            Statement::Delete { from, .. } => {
+                if !instance.check_table_permission(username, db_name, from, &Privilege::Delete) {
+                    return Some(format!(
+                        "Permission denied: User '{}' does not have DELETE privilege on table '{}'",
+                        username, from
+                    ));
+                }
+            }
+
+            // ALTER TABLE - check owner or superuser
+            Statement::AlterTable { name, .. } => {
+                if !instance.is_table_owner_or_superuser(username, db_name, name) {
+                    return Some(format!(
+                        "Permission denied: User '{}' must be table owner or superuser to ALTER TABLE '{}'",
+                        username, name
+                    ));
+                }
+            }
+
+            // DROP TABLE - check owner or superuser
+            Statement::DropTable { name } => {
+                if !instance.is_table_owner_or_superuser(username, db_name, name) {
+                    return Some(format!(
+                        "Permission denied: User '{}' must be table owner or superuser to DROP TABLE '{}'",
+                        username, name
+                    ));
+                }
+            }
+
+            // Other statements - no table-level permissions required
+            _ => {}
+        }
+
+        None // Permission granted
     }
 }

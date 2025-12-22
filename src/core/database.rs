@@ -75,4 +75,34 @@ impl Database {
 
         Ok(())
     }
+
+    /// v2.3.0: Check if user has permission on a table
+    ///
+    /// Returns true if:
+    /// - User is the table owner
+    /// - User has been granted the specific privilege
+    /// - Privilege is not a table-level privilege (e.g., Connect, Create)
+    #[must_use]
+    pub fn check_table_permission(
+        &self,
+        username: &str,
+        table_name: &str,
+        privilege: crate::core::Privilege,
+    ) -> bool {
+        if let Some(metadata) = self.table_metadata.get(table_name) {
+            metadata.has_privilege(username, &privilege) || metadata.is_owner(username)
+        } else {
+            false
+        }
+    }
+
+    /// v2.3.0: Check if user is table owner
+    #[must_use]
+    pub fn is_table_owner(&self, username: &str, table_name: &str) -> bool {
+        if let Some(metadata) = self.table_metadata.get(table_name) {
+            metadata.is_owner(username)
+        } else {
+            false
+        }
+    }
 }

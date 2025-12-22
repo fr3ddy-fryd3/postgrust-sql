@@ -33,6 +33,10 @@ impl SystemCatalog {
                 | "pg_roles"
                 | "pg_catalog.pg_user"
                 | "pg_user"
+                | "pg_catalog.pg_auth_members"
+                | "pg_auth_members"
+                | "pg_catalog.table_privileges"
+                | "table_privileges"
                 | "information_schema.tables"
                 | "information_schema.columns"
         )
@@ -52,6 +56,8 @@ impl SystemCatalog {
             "pg_catalog.pg_database" | "pg_database" => Self::pg_database(db),
             "pg_catalog.pg_roles" | "pg_roles" => Self::pg_roles(),
             "pg_catalog.pg_user" | "pg_user" => Self::pg_user(),
+            "pg_catalog.pg_auth_members" | "pg_auth_members" => Self::pg_auth_members(),
+            "pg_catalog.table_privileges" | "table_privileges" => Self::table_privileges(db),
             "information_schema.tables" => Self::information_schema_tables(db),
             "information_schema.columns" => Self::information_schema_columns(db),
             _ => Err(DatabaseError::TableNotFound(table_name.to_string())),
@@ -60,17 +66,19 @@ impl SystemCatalog {
 
     /// `pg_catalog.pg_class` - Tables, indexes, views
     ///
-    /// Simplified schema:
+    /// Schema (v2.3.0: added tableowner):
     /// - oid: Object ID (fake)
     /// - relname: Relation name
     /// - relnamespace: Namespace OID (always 2200 = public)
     /// - relkind: 'r' = table, 'i' = index, 'v' = view
+    /// - relowner: Owner OID (v2.3.0) - 10 for postgres, 16384+ for other users
     fn pg_class(db: &Database) -> Result<QueryResult, DatabaseError> {
         let columns = vec![
             "oid".to_string(),
             "relname".to_string(),
             "relnamespace".to_string(),
             "relkind".to_string(),
+            "relowner".to_string(), // v2.3.0
         ];
 
         let mut rows = Vec::new();
@@ -78,11 +86,24 @@ impl SystemCatalog {
 
         // Tables
         for table_name in db.tables.keys() {
+            // Get owner from table_metadata (v2.3.0)
+            let owner_oid = if let Some(metadata) = db.table_metadata.get(table_name) {
+                // postgres = OID 10, others use 16384+
+                if metadata.owner == "postgres" {
+                    "10".to_string()
+                } else {
+                    "16384".to_string() // Simplified: all non-postgres users get same OID
+                }
+            } else {
+                "10".to_string() // Default to postgres
+            };
+
             rows.push(vec![
                 oid.to_string(),
                 table_name.clone(),
                 "2200".to_string(), // public schema
                 "r".to_string(),    // table
+                owner_oid,
             ]);
             oid += 1;
         }
@@ -94,6 +115,7 @@ impl SystemCatalog {
                 view_name.clone(),
                 "2200".to_string(),
                 "v".to_string(), // view
+                "10".to_string(), // Default owner: postgres
             ]);
             oid += 1;
         }
@@ -105,6 +127,7 @@ impl SystemCatalog {
                 index_name.clone(),
                 "2200".to_string(),
                 "i".to_string(), // index
+                "10".to_string(), // Default owner: postgres
             ]);
             oid += 1;
         }
@@ -445,6 +468,81 @@ impl SystemCatalog {
 
         Ok(QueryResult::Rows(rows, columns))
     }
+
+    /// `pg_catalog.pg_auth_members` - Role membership (v2.3.0)
+    ///
+    /// NOTE: This is a minimal stub implementation.
+    /// Real implementation requires ServerInstance access.
+    ///
+    /// Schema:
+    /// - roleid: Role OID
+    /// - member: Member OID (user or role that belongs to roleid)
+    /// - grantor: Grantor OID (who granted the membership)
+    /// - admin_option: Can member grant this role to others?
+    fn pg_auth_members() -> Result<QueryResult, DatabaseError> {
+        let columns = vec![
+            "roleid".to_string(),
+            "member".to_string(),
+            "grantor".to_string(),
+            "admin_option".to_string(),
+        ];
+
+        // Stub: return empty result
+        // TODO (v2.3.0): Query actual role memberships from ServerInstance
+        let rows: Vec<Vec<String>> = Vec::new();
+
+        Ok(QueryResult::Rows(rows, columns))
+    }
+
+    /// `pg_catalog.table_privileges` - Table-level privileges (v2.3.0)
+    ///
+    /// Schema:
+    /// - grantor: User who granted the privilege
+    /// - grantee: User who received the privilege
+    /// - table_catalog: Database name
+    /// - table_schema: Schema name (always 'public')
+    /// - table_name: Table name
+    /// - privilege_type: SELECT, INSERT, UPDATE, DELETE, etc.
+    fn table_privileges(db: &Database) -> Result<QueryResult, DatabaseError> {
+        let columns = vec![
+            "grantor".to_string(),
+            "grantee".to_string(),
+            "table_catalog".to_string(),
+            "table_schema".to_string(),
+            "table_name".to_string(),
+            "privilege_type".to_string(),
+        ];
+
+        let mut rows = Vec::new();
+
+        // Iterate through all tables and their privileges
+        for (table_name, metadata) in &db.table_metadata {
+            for (username, privileges) in &metadata.privileges {
+                for privilege in privileges {
+                    let privilege_str = match privilege {
+                        crate::core::Privilege::Connect => "CONNECT",
+                        crate::core::Privilege::Create => "CREATE",
+                        crate::core::Privilege::Select => "SELECT",
+                        crate::core::Privilege::Insert => "INSERT",
+                        crate::core::Privilege::Update => "UPDATE",
+                        crate::core::Privilege::Delete => "DELETE",
+                        crate::core::Privilege::All => "ALL",
+                    };
+
+                    rows.push(vec![
+                        metadata.owner.clone(),     // grantor (owner grants privileges)
+                        username.clone(),           // grantee
+                        db.name.clone(),            // table_catalog
+                        "public".to_string(),       // table_schema
+                        table_name.clone(),         // table_name
+                        privilege_str.to_string(),  // privilege_type
+                    ]);
+                }
+            }
+        }
+
+        Ok(QueryResult::Rows(rows, columns))
+    }
 }
 
 #[cfg(test)]
@@ -527,11 +625,12 @@ mod tests {
 
         match result {
             QueryResult::Rows(rows, cols) => {
-                assert_eq!(cols, vec!["oid", "relname", "relnamespace", "relkind"]);
+                assert_eq!(cols, vec!["oid", "relname", "relnamespace", "relkind", "relowner"]);
                 assert_eq!(rows.len(), 1);
                 assert_eq!(rows[0][1], "users");
                 assert_eq!(rows[0][2], "2200"); // public schema
                 assert_eq!(rows[0][3], "r"); // table
+                assert_eq!(rows[0][4], "10"); // default owner: postgres
             }
             _ => panic!("Expected Rows"),
         }

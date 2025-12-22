@@ -271,6 +271,89 @@ impl ServerInstance {
             Err(DatabaseError::DatabaseNotFound(db_name.to_string()))
         }
     }
+
+    /// v2.3.0: Проверяет, есть ли у пользователя право на таблицу (с учетом ролей)
+    ///
+    /// Возвращает true если:
+    /// - Пользователь - суперпользователь
+    /// - Пользователь - владелец таблицы
+    /// - Пользователь имеет данное право на таблицу
+    /// - Одна из ролей пользователя имеет это право
+    #[must_use]
+    pub fn check_table_permission(
+        &self,
+        username: &str,
+        db_name: &str,
+        table_name: &str,
+        privilege: &Privilege,
+    ) -> bool {
+        // Суперпользователь имеет все права
+        if let Some(user) = self.users.get(username) {
+            if user.is_superuser {
+                return true;
+            }
+        }
+
+        // Проверяем через роли на суперпользователя
+        let user_roles = self.get_user_roles(username);
+        for role_name in &user_roles {
+            if let Some(role) = self.roles.get(role_name) {
+                if role.is_superuser {
+                    return true;
+                }
+            }
+        }
+
+        // Проверяем права на таблицу в базе данных
+        if let Some(db) = self.databases.get(db_name) {
+            // Проверяем права пользователя
+            if db.check_table_permission(username, table_name, privilege.clone()) {
+                return true;
+            }
+
+            // Проверяем права через роли
+            for role_name in &user_roles {
+                if db.check_table_permission(role_name, table_name, privilege.clone()) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// v2.3.0: Проверяет, является ли пользователь владельцем таблицы или суперпользователем
+    #[must_use]
+    pub fn is_table_owner_or_superuser(
+        &self,
+        username: &str,
+        db_name: &str,
+        table_name: &str,
+    ) -> bool {
+        // Суперпользователь имеет все права
+        if let Some(user) = self.users.get(username) {
+            if user.is_superuser {
+                return true;
+            }
+        }
+
+        // Проверяем через роли на суперпользователя
+        let user_roles = self.get_user_roles(username);
+        for role_name in &user_roles {
+            if let Some(role) = self.roles.get(role_name) {
+                if role.is_superuser {
+                    return true;
+                }
+            }
+        }
+
+        // Проверяем владение таблицей
+        if let Some(db) = self.databases.get(db_name) {
+            db.is_table_owner(username, table_name)
+        } else {
+            false
+        }
+    }
 }
 
 impl Default for ServerInstance {
