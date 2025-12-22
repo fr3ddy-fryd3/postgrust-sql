@@ -169,6 +169,7 @@ pub enum AlterTableOperation {
     DropColumn(String),
     RenameColumn { old_name: String, new_name: String },
     RenameTable(String),
+    OwnerTo(String),  // v2.3.0: ALTER TABLE ... OWNER TO new_owner
 }
 
 #[derive(Debug, Clone, PartialEq)]

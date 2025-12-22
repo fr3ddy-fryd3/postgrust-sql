@@ -906,9 +906,21 @@ impl Server {
                                                 .expect("v2.0.0: database_storage is required");
                                             let mut db_storage_guard = db_storage.lock().await;
 
+                                            // v2.3.0: Set owner for CREATE TABLE from current session
+                                            let stmt_with_owner = match other_stmt {
+                                                crate::parser::Statement::CreateTable { name, columns, owner: None } => {
+                                                    crate::parser::Statement::CreateTable {
+                                                        name,
+                                                        columns,
+                                                        owner: Some(session.username.clone()),
+                                                    }
+                                                }
+                                                other => other,
+                                            };
+
                                             match QueryExecutor::execute(
                                                 db,
-                                                other_stmt,
+                                                stmt_with_owner,
                                                 storage_option,
                                                 &tx_manager,
                                                 &mut db_storage_guard,

@@ -278,6 +278,14 @@ pub fn alter_table(input: &str) -> IResult<&str, Statement> {
             ),
             AlterTableOperation::RenameTable
         ),
+        // OWNER TO (change table owner) - v2.3.0
+        map(
+            preceded(
+                ws(tag_no_case("OWNER TO")),
+                ws(identifier)
+            ),
+            AlterTableOperation::OwnerTo
+        ),
     ))(input)?;
     
     Ok((input, Statement::AlterTable {

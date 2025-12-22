@@ -136,7 +136,7 @@ impl DdlExecutor {
         storage: Option<&mut StorageEngine>,
         database_storage: &mut crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
-        use AlterTableOperation::{AddColumn, DropColumn, RenameColumn, RenameTable};
+        use AlterTableOperation::{AddColumn, DropColumn, OwnerTo, RenameColumn, RenameTable};
 
         match operation {
             AddColumn(column_def) => {
@@ -150,6 +150,9 @@ impl DdlExecutor {
             }
             RenameTable(new_name) => {
                 Self::alter_table_rename_table(db, &table_name, new_name, storage)
+            }
+            OwnerTo(new_owner) => {
+                Self::alter_table_owner_to(db, &table_name, new_owner, storage)
             }
         }
     }
@@ -368,6 +371,32 @@ impl DdlExecutor {
 
         Ok(QueryResult::Success(format!(
             "Table '{old_name}' renamed to '{new_name}'"
+        )))
+    }
+
+    /// ALTER TABLE OWNER TO (v2.3.0)
+    fn alter_table_owner_to(
+        db: &mut Database,
+        table_name: &str,
+        new_owner: String,
+        storage: Option<&mut StorageEngine>,
+    ) -> Result<QueryResult, DatabaseError> {
+        // Get table
+        let table = db.tables.get_mut(table_name)
+            .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
+
+        // Log to WAL (optional - ownership change is metadata)
+        if let Some(storage) = storage {
+            // We could log this, but it's not critical for crash recovery
+            let _ = storage; // suppress unused warning
+        }
+
+        // Change owner
+        let old_owner = table.owner.clone();
+        table.owner = new_owner.clone();
+
+        Ok(QueryResult::Success(format!(
+            "Changed owner of table '{table_name}' from '{old_owner}' to '{new_owner}'"
         )))
     }
 
