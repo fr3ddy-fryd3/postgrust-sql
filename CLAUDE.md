@@ -164,6 +164,18 @@ EXPLAIN SELECT * FROM users WHERE city = 'LA' AND age = 25;
 -- Maintenance
 VACUUM;              -- Cleanup all tables
 VACUUM table_name;   -- Cleanup specific table
+
+-- RBAC (v2.3.0)
+CREATE ROLE readonly;                             -- Create role
+CREATE ROLE admin SUPERUSER;                      -- Create superuser role
+DROP ROLE readonly;                               -- Drop role
+GRANT readonly TO alice;                          -- Grant role to user
+REVOKE readonly FROM alice;                       -- Revoke role from user
+CREATE TABLE orders (id SERIAL, amount NUMERIC);  -- Owner = session user
+ALTER TABLE orders OWNER TO bob;                  -- Change table owner
+GRANT SELECT ON TABLE orders TO alice;            -- Grant table privilege
+GRANT INSERT, UPDATE ON TABLE orders TO readonly; -- Grant multiple privileges
+REVOKE SELECT ON TABLE orders FROM alice;         -- Revoke table privilege
 ```
 
 ## Data Types (23 total)
@@ -340,7 +352,17 @@ Allowed lints (configured in `src/lib.rs`):
 
 ## Версионирование
 
-**Current**: v2.2.2 (Bug Fixes and Improvements)
+**Current**: v2.3.0 (Role-Based Access Control)
+
+**v2.3.0 Changes:**
+- 🔐 **Complete RBAC System** - CREATE/DROP ROLE, GRANT/REVOKE roles
+- 👥 **Table Ownership** - Every table has an owner (creator by default)
+- 🔒 **Table-level Privileges** - GRANT/REVOKE SELECT/INSERT/UPDATE/DELETE ON TABLE
+- ✅ **Permission Enforcement** - Automatic checks before DML/DDL operations
+- 📊 **System Catalogs** - pg_class (relowner), pg_auth_members, table_privileges
+- 🧪 **198 unit tests passing** (9 new RBAC tests)
+- 📝 **ALTER TABLE OWNER TO** - Change table ownership
+- 🌳 **Role Hierarchy** - Recursive role membership inheritance
 
 **v2.2.2 Changes:**
 - 🔧 Fixed Dockerfile binary naming (postgrustql → postgrustsql)
