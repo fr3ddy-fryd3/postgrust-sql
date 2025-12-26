@@ -25,10 +25,18 @@ cargo run --release
 cargo run --example cli
 ```
 
-## Возможности (v2.3.0)
+## Возможности (v2.4.0)
 
 ### Основное
 - **SQL запросы**: CREATE/DROP TABLE/VIEW, INSERT, SELECT, UPDATE, DELETE, SHOW TABLES
+- **Extended Query Protocol** (v2.4.0): Prepared statements с параметрами ($1, $2, $3...)
+  - PARSE/BIND/DESCRIBE/EXECUTE/CLOSE/SYNC протокол
+  - Server-side statement caching для производительности
+  - Защита от SQL injection через параметризацию
+- **COPY Protocol** (v2.4.0): Массовый импорт/экспорт данных
+  - COPY FROM STDIN для bulk import (CSV/TSV)
+  - COPY TO STDOUT для экспорта данных
+  - 10-100x быстрее чем обычные INSERT
 - **Role-Based Access Control** (v2.3.0): Роли, владение таблицами, права доступа
   - CREATE/DROP ROLE, GRANT/REVOKE роли
   - Автоматическое владение таблицами (owner = создатель)
@@ -42,6 +50,7 @@ cargo run --example cli
 - **Индексы**: B-tree и Hash индексы (одиночные и составные)
 - **VACUUM**: очистка мёртвых версий строк (MVCC cleanup)
 - **PostgreSQL Protocol** (v2.0.0): Полная совместимость с psql клиентом
+  - Simple Query Protocol + Extended Query Protocol (v2.4.0)
   - Стандартный authentication flow (AuthenticationCleartextPassword)
   - System catalogs (pg_catalog.*, information_schema.*)
   - System functions (version(), current_database(), pg_table_size())
@@ -67,9 +76,9 @@ cargo run --example cli
 - **Составные индексы**: поддержка multi-column индексов
 - **Foreign Keys**: поддержка внешних ключей
 
-## Архитектура (v2.3.0)
+## Архитектура (v2.4.0)
 
-**Модульная структура** (~18200 строк кода, добавлен RBAC в v2.3.0):
+**Модульная структура** (~18200 строк кода, добавлены Extended Query + COPY в v2.4.0):
 
 ```
 postgrustsql/
@@ -95,7 +104,11 @@ postgrustsql/
 │   ├── index/              # B-tree & Hash индексы (single & composite)
 │   ├── transaction/        # TransactionManager, Snapshot, GlobalTransactionManager
 │   ├── storage/            # Binary save/load, WAL, Page-based storage
-│   └── network/            # TCP server, PostgreSQL protocol, permission enforcement
+│   └── network/            # TCP server, PostgreSQL protocol
+│       ├── server.rs           # TCP сервер с Simple + Extended Query Protocol
+│       ├── pg_protocol.rs      # PostgreSQL wire protocol messages
+│       ├── prepared_statements.rs  # (v2.4.0) Statement cache + parameter substitution
+│       └── mod.rs              # Permission enforcement, session context
 └── examples/
     ├── client.rs           # Автоматический клиент
     └── cli.rs              # Интерактивный CLI клиент

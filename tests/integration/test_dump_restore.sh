@@ -1,5 +1,5 @@
 #!/bin/bash
-# Integration test for postgrust-dump and postgrust-restore
+# Integration test for pgr_dump and pgr_restore
 # Tests SQL and binary dump/restore round-trip
 
 set -e  # Exit on error
@@ -10,8 +10,8 @@ echo "======================================"
 echo
 
 # Build binaries
-echo "[1/7] Building postgrust-dump and postgrust-restore..."
-cargo build --release --bin postgrust-dump --bin postgrust-restore 2>/dev/null
+echo "[1/7] Building pgr_dump and pgr_restore..."
+cargo build --release --bin pgr_dump --bin pgr_restore 2>/dev/null
 echo "✓ Binaries built"
 echo
 
@@ -80,7 +80,7 @@ echo
 
 # Dump database (SQL format)
 echo "[4/7] Dumping database (SQL format)..."
-./target/release/postgrust-dump \
+./target/release/pgr_dump \
     --data-dir "$TEST_DIR/original" \
     --output "$TEST_DIR/dump.sql" \
     postgres > /dev/null
@@ -89,7 +89,7 @@ echo
 
 # Dump database (Binary format)
 echo "[5/7] Dumping database (Binary format)..."
-./target/release/postgrust-dump \
+./target/release/pgr_dump \
     --data-dir "$TEST_DIR/original" \
     --format binary \
     --output "$TEST_DIR/dump.bin" \
@@ -105,7 +105,7 @@ echo
 
 # Restore from SQL dump
 echo "[6/7] Restoring from SQL dump..."
-./target/release/postgrust-restore \
+./target/release/pgr_restore \
     --data-dir "$TEST_DIR/restored_sql" \
     --input "$TEST_DIR/dump.sql" \
     postgres_restored 2>&1 | grep -E "completed|statements" || true
@@ -113,7 +113,7 @@ echo
 
 # Restore from Binary dump
 echo "[7/7] Restoring from Binary dump..."
-./target/release/postgrust-restore \
+./target/release/pgr_restore \
     --data-dir "$TEST_DIR/restored_binary" \
     --format binary \
     --input "$TEST_DIR/dump.bin" \
