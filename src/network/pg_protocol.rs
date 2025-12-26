@@ -23,6 +23,11 @@ pub mod backend {
     pub const CLOSE_COMPLETE: u8 = b'3';
     pub const NO_DATA: u8 = b'n';
     pub const PARAMETER_DESCRIPTION: u8 = b't';
+    // COPY Protocol (v2.4.0)
+    pub const COPY_IN_RESPONSE: u8 = b'G';
+    pub const COPY_OUT_RESPONSE: u8 = b'H';
+    pub const COPY_DONE: u8 = b'c';
+    pub const COPY_DATA: u8 = b'd';
 }
 
 /// Message types (from frontend to backend)
@@ -37,6 +42,10 @@ pub mod frontend {
     pub const EXECUTE: u8 = b'E';
     pub const CLOSE: u8 = b'C';
     pub const SYNC: u8 = b'S';
+    // COPY Protocol (v2.4.0)
+    pub const COPY_DATA: u8 = b'd';
+    pub const COPY_DONE: u8 = b'c';
+    pub const COPY_FAIL: u8 = b'f';
 }
 
 /// Transaction status indicators
@@ -526,6 +535,58 @@ impl Message {
     pub fn no_data() -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::NO_DATA);
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `CopyInResponse` message (v2.4.0 - COPY Protocol)
+    /// Server tells client to start sending COPY data
+    #[must_use]
+    pub fn copy_in_response(format: u8, num_columns: i16) -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::COPY_IN_RESPONSE);
+        msg.buf.put_u8(format); // 0 = text, 1 = binary
+        msg.buf.put_i16(num_columns);
+        // Column format codes (all 0 for text)
+        for _ in 0..num_columns {
+            msg.buf.put_i16(0);
+        }
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `CopyOutResponse` message (v2.4.0 - COPY Protocol)
+    /// Server tells client it will start sending COPY data
+    #[must_use]
+    pub fn copy_out_response(format: u8, num_columns: i16) -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::COPY_OUT_RESPONSE);
+        msg.buf.put_u8(format);
+        msg.buf.put_i16(num_columns);
+        for _ in 0..num_columns {
+            msg.buf.put_i16(0);
+        }
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `CopyData` message (v2.4.0 - COPY Protocol)
+    /// Contains a chunk of COPY data
+    #[must_use]
+    pub fn copy_data(data: &[u8]) -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::COPY_DATA);
+        msg.buf.put_slice(data);
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `CopyDone` message (v2.4.0 - COPY Protocol)
+    /// Indicates end of COPY data
+    #[must_use]
+    pub fn copy_done() -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::COPY_DONE);
         msg.finish(len_pos);
         msg
     }
