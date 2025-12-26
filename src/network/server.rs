@@ -969,6 +969,143 @@ impl Server {
                                                 .send(&mut writer)
                                                 .await?;
                                         }
+                                        // COPY protocol (v2.4.0)
+                                        crate::parser::Statement::Copy { table, columns, from_stdin, format } => {
+                                            use crate::parser::CopyFormat;
+
+                                            if !from_stdin {
+                                                Message::error_response("COPY TO STDOUT not yet implemented")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                Message::ready_for_query(transaction_status::IDLE)
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                continue;
+                                            }
+
+                                            if format == CopyFormat::Binary {
+                                                Message::error_response("COPY binary format not yet implemented")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                Message::ready_for_query(transaction_status::IDLE)
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                continue;
+                                            }
+
+                                            // Get table to determine column count
+                                            let table_obj = db.get_table(&table);
+                                            if table_obj.is_none() {
+                                                Message::error_response(&format!("Table '{table}' not found"))
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                Message::ready_for_query(transaction_status::IDLE)
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                continue;
+                                            }
+
+                                            let table_obj = table_obj.unwrap();
+                                            let num_columns = if let Some(ref cols) = columns {
+                                                cols.len() as i16
+                                            } else {
+                                                table_obj.columns.len() as i16
+                                            };
+
+                                            // Send CopyInResponse - server ready to receive data
+                                            Message::copy_in_response(0, num_columns) // 0 = text format
+                                                .send(&mut writer)
+                                                .await?;
+
+                                            // Read COPY data in a loop until CopyDone or CopyFail
+                                            let mut copy_buffer = String::new();
+                                            let mut rows_inserted = 0;
+
+                                            loop {
+                                                let (msg_type, data) = match pg_protocol::read_frontend_message(&mut reader).await {
+                                                    Ok(msg) => msg,
+                                                    Err(_) => break,
+                                                };
+
+                                                match msg_type {
+                                                    frontend::COPY_DATA => {
+                                                        // Accumulate data
+                                                        if let Ok(chunk) = String::from_utf8(data) {
+                                                            copy_buffer.push_str(&chunk);
+                                                        }
+                                                    }
+                                                    frontend::COPY_DONE => {
+                                                        // Process all accumulated data
+                                                        for line in copy_buffer.lines() {
+                                                            if line.trim().is_empty() {
+                                                                continue;
+                                                            }
+
+                                                            // Simple CSV parsing - split by comma
+                                                            let values: Vec<&str> = line.split(',').collect();
+
+                                                            // Convert to Value types (simplified - all as Text)
+                                                            let value_objs: Vec<Value> = values
+                                                                .iter()
+                                                                .map(|v| Value::Text(v.trim().to_string()))
+                                                                .collect();
+
+                                                            // Insert into table
+                                                            let insert_stmt = crate::parser::Statement::Insert {
+                                                                table: table.clone(),
+                                                                columns: columns.clone(),
+                                                                values: value_objs,
+                                                            };
+
+                                                            let db_storage = database_storage
+                                                                .as_ref()
+                                                                .expect("database_storage required");
+                                                            let mut db_storage_guard = db_storage.lock().await;
+                                                            let mut storage_guard = storage.lock().await;
+
+                                                            match QueryExecutor::execute(
+                                                                db,
+                                                                insert_stmt,
+                                                                Some(&mut *storage_guard),
+                                                                &tx_manager,
+                                                                &mut db_storage_guard,
+                                                                transaction.tx_id(),
+                                                            ) {
+                                                                Ok(_) => rows_inserted += 1,
+                                                                Err(e) => {
+                                                                    Message::error_response(&format!("COPY error: {e}"))
+                                                                        .send(&mut writer)
+                                                                        .await?;
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Send CommandComplete
+                                                        Message::command_complete(&format!("COPY {rows_inserted}"))
+                                                            .send(&mut writer)
+                                                            .await?;
+                                                        break;
+                                                    }
+                                                    frontend::COPY_FAIL => {
+                                                        Message::error_response("COPY failed by client")
+                                                            .send(&mut writer)
+                                                            .await?;
+                                                        break;
+                                                    }
+                                                    _ => {
+                                                        Message::error_response(&format!("Unexpected message during COPY: {msg_type}"))
+                                                            .send(&mut writer)
+                                                            .await?;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+
+                                            Message::ready_for_query(transaction_status::IDLE)
+                                                .send(&mut writer)
+                                                .await?;
+                                        }
                                         _ => {
                                             let mut storage_guard = storage.lock().await;
                                             let storage_option = if transaction.is_active() {
