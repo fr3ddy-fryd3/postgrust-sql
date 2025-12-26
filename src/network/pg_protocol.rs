@@ -17,6 +17,12 @@ pub mod backend {
     pub const COMMAND_COMPLETE: u8 = b'C';
     pub const ERROR_RESPONSE: u8 = b'E';
     pub const PARAMETER_STATUS: u8 = b'S';
+    // Extended Query Protocol (v2.4.0)
+    pub const PARSE_COMPLETE: u8 = b'1';
+    pub const BIND_COMPLETE: u8 = b'2';
+    pub const CLOSE_COMPLETE: u8 = b'3';
+    pub const NO_DATA: u8 = b'n';
+    pub const PARAMETER_DESCRIPTION: u8 = b't';
 }
 
 /// Message types (from frontend to backend)
@@ -24,6 +30,13 @@ pub mod frontend {
     pub const QUERY: u8 = b'Q';
     pub const TERMINATE: u8 = b'X';
     pub const PASSWORD: u8 = b'p'; // v2.0.0: Password message
+    // Extended Query Protocol (v2.4.0)
+    pub const PARSE: u8 = b'P';
+    pub const BIND: u8 = b'B';
+    pub const DESCRIBE: u8 = b'D';
+    pub const EXECUTE: u8 = b'E';
+    pub const CLOSE: u8 = b'C';
+    pub const SYNC: u8 = b'S';
 }
 
 /// Transaction status indicators
@@ -76,6 +89,202 @@ impl PasswordMessage {
 
         let password = String::from_utf8_lossy(&password_buf).to_string();
         Ok(Self { password })
+    }
+}
+
+/// `ParseMessage` from client (v2.4.0 - Extended Query Protocol)
+/// Format: 'P' + Int32(length) + statement_name (cstring) + query (cstring) + Int16(num_params) + [Int32(param_oid), ...]
+pub struct ParseMessage {
+    pub statement_name: String,
+    pub query: String,
+    pub param_types: Vec<i32>,
+}
+
+impl ParseMessage {
+    pub fn from_data(data: &[u8]) -> std::io::Result<Self> {
+        let mut pos = 0;
+
+        // Read statement name (null-terminated)
+        let (statement_name, bytes_read) = extract_cstring(&data[pos..])
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid statement name"))?;
+        pos += bytes_read;
+
+        // Read query (null-terminated)
+        let (query, bytes_read) = extract_cstring(&data[pos..])
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid query"))?;
+        pos += bytes_read;
+
+        // Read parameter type count
+        if pos + 2 > data.len() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing param count"));
+        }
+        let num_params = i16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+        pos += 2;
+
+        // Read parameter OIDs
+        let mut param_types = Vec::with_capacity(num_params);
+        for _ in 0..num_params {
+            if pos + 4 > data.len() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing param type"));
+            }
+            let oid = i32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            param_types.push(oid);
+            pos += 4;
+        }
+
+        Ok(Self {
+            statement_name,
+            query,
+            param_types,
+        })
+    }
+}
+
+/// `BindMessage` from client (v2.4.0 - Extended Query Protocol)
+/// Format: 'B' + Int32(length) + portal (cstring) + statement (cstring) + param_formats + param_values + result_formats
+pub struct BindMessage {
+    pub portal_name: String,
+    pub statement_name: String,
+    pub param_values: Vec<Option<Vec<u8>>>,
+}
+
+impl BindMessage {
+    pub fn from_data(data: &[u8]) -> std::io::Result<Self> {
+        let mut pos = 0;
+
+        // Read portal name
+        let (portal_name, bytes_read) = extract_cstring(&data[pos..])
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid portal name"))?;
+        pos += bytes_read;
+
+        // Read statement name
+        let (statement_name, bytes_read) = extract_cstring(&data[pos..])
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid statement name"))?;
+        pos += bytes_read;
+
+        // Read parameter format codes count
+        if pos + 2 > data.len() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing format codes count"));
+        }
+        let num_format_codes = i16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+        pos += 2;
+
+        // Skip format codes (we'll assume text format for simplicity)
+        pos += num_format_codes * 2;
+
+        // Read parameter values count
+        if pos + 2 > data.len() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing param values count"));
+        }
+        let num_params = i16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+        pos += 2;
+
+        // Read parameter values
+        let mut param_values = Vec::with_capacity(num_params);
+        for _ in 0..num_params {
+            if pos + 4 > data.len() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing param length"));
+            }
+            let length = i32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            pos += 4;
+
+            if length == -1 {
+                // NULL value
+                param_values.push(None);
+            } else {
+                let length = length as usize;
+                if pos + length > data.len() {
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid param value"));
+                }
+                let value = data[pos..pos + length].to_vec();
+                param_values.push(Some(value));
+                pos += length;
+            }
+        }
+
+        Ok(Self {
+            portal_name,
+            statement_name,
+            param_values,
+        })
+    }
+}
+
+/// `DescribeMessage` from client (v2.4.0 - Extended Query Protocol)
+/// Format: 'D' + Int32(length) + type (byte: 'S' or 'P') + name (cstring)
+pub struct DescribeMessage {
+    pub describe_type: char, // 'S' for statement, 'P' for portal
+    pub name: String,
+}
+
+impl DescribeMessage {
+    pub fn from_data(data: &[u8]) -> std::io::Result<Self> {
+        if data.is_empty() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Empty describe message"));
+        }
+
+        let describe_type = data[0] as char;
+        let (name, _) = extract_cstring(&data[1..])
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid name"))?;
+
+        Ok(Self {
+            describe_type,
+            name,
+        })
+    }
+}
+
+/// `ExecuteMessage` from client (v2.4.0 - Extended Query Protocol)
+/// Format: 'E' + Int32(length) + portal (cstring) + max_rows (Int32)
+pub struct ExecuteMessage {
+    pub portal_name: String,
+    pub max_rows: i32,
+}
+
+impl ExecuteMessage {
+    pub fn from_data(data: &[u8]) -> std::io::Result<Self> {
+        let (portal_name, bytes_read) = extract_cstring(data)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid portal name"))?;
+
+        if bytes_read + 4 > data.len() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing max_rows"));
+        }
+
+        let max_rows = i32::from_be_bytes([
+            data[bytes_read],
+            data[bytes_read + 1],
+            data[bytes_read + 2],
+            data[bytes_read + 3],
+        ]);
+
+        Ok(Self {
+            portal_name,
+            max_rows,
+        })
+    }
+}
+
+/// `CloseMessage` from client (v2.4.0 - Extended Query Protocol)
+/// Format: 'C' + Int32(length) + type (byte: 'S' or 'P') + name (cstring)
+pub struct CloseMessage {
+    pub close_type: char, // 'S' for statement, 'P' for portal
+    pub name: String,
+}
+
+impl CloseMessage {
+    pub fn from_data(data: &[u8]) -> std::io::Result<Self> {
+        if data.is_empty() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Empty close message"));
+        }
+
+        let close_type = data[0] as char;
+        let (name, _) = extract_cstring(&data[1..])
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid name"))?;
+
+        Ok(Self {
+            close_type,
+            name,
+        })
     }
 }
 
@@ -276,11 +485,47 @@ impl Message {
     }
 
     /// `CommandComplete` message
-    #[must_use] 
+    #[must_use]
     pub fn command_complete(tag: &str) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::COMMAND_COMPLETE);
         msg.put_cstring(tag);
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `ParseComplete` message (v2.4.0 - Extended Query Protocol)
+    #[must_use]
+    pub fn parse_complete() -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::PARSE_COMPLETE);
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `BindComplete` message (v2.4.0 - Extended Query Protocol)
+    #[must_use]
+    pub fn bind_complete() -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::BIND_COMPLETE);
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `CloseComplete` message (v2.4.0 - Extended Query Protocol)
+    #[must_use]
+    pub fn close_complete() -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::CLOSE_COMPLETE);
+        msg.finish(len_pos);
+        msg
+    }
+
+    /// `NoData` message (v2.4.0 - Extended Query Protocol)
+    #[must_use]
+    pub fn no_data() -> Self {
+        let mut msg = Self::new();
+        let len_pos = msg.start(backend::NO_DATA);
         msg.finish(len_pos);
         msg
     }
