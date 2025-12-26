@@ -6,6 +6,7 @@ license = "MIT"
 authors = ["fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>"]
 description = "PostgreSQL-compatible database server written in Rust with MVCC, transactions, and full SQL support"
 repository = "https://github.com/fr3ddy-fryd3/postgrust-sql"
+default-run = "postgrustsql"
 
 [dependencies]
 tokio = { version = "1.41", features = ["full"] }

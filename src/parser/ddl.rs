@@ -3,7 +3,7 @@ use super::common::{ws, identifier, data_type, string_literal};
 use super::statement::{Statement, ColumnDef, PrivilegeType};
 use nom::{
     branch::alt,
-    bytes::complete::{tag_no_case, take_while1},
+    bytes::complete::{tag, tag_no_case, take_while1},
     character::complete::char,
     combinator::{map, opt},
     multi::separated_list1,
@@ -421,4 +421,61 @@ pub fn parse_drop_view(input: &str) -> IResult<&str, Statement> {
     let (input, name) = ws(identifier)(input)?;
 
     Ok((input, Statement::DropView { name }))
+}
+
+/// Parse COPY command (v2.4.0)
+/// COPY table FROM STDIN [WITH (FORMAT csv)]
+/// COPY table TO STDOUT [WITH (FORMAT csv)]
+/// COPY table (col1, col2) FROM STDIN
+pub fn parse_copy(input: &str) -> nom::IResult<&str, Statement> {
+    use crate::parser::statement::CopyFormat;
+
+    let (input, _) = ws(tag_no_case("COPY"))(input)?;
+    let (input, table) = ws(identifier)(input)?;
+
+    // Optional column list
+    let (input, columns) = opt(delimited(
+        ws(tag("(")),
+        separated_list1(ws(tag(",")), identifier),
+        ws(tag(")")),
+    ))(input)?;
+
+    // FROM or TO
+    let (input, from_stdin) = alt((
+        map(ws(tag_no_case("FROM")), |_| true),
+        map(ws(tag_no_case("TO")), |_| false),
+    ))(input)?;
+
+    // STDIN or STDOUT
+    let (input, _) = alt((
+        ws(tag_no_case("STDIN")),
+        ws(tag_no_case("STDOUT")),
+    ))(input)?;
+
+    // Optional WITH (FORMAT csv/binary)
+    let (input, format) = opt(preceded(
+        ws(tag_no_case("WITH")),
+        delimited(
+            ws(tag("(")),
+            preceded(
+                ws(tag_no_case("FORMAT")),
+                alt((
+                    map(ws(tag_no_case("csv")), |_| CopyFormat::Text),
+                    map(ws(tag_no_case("text")), |_| CopyFormat::Text),
+                    map(ws(tag_no_case("binary")), |_| CopyFormat::Binary),
+                )),
+            ),
+            ws(tag(")")),
+        ),
+    ))(input)?;
+
+    Ok((
+        input,
+        Statement::Copy {
+            table,
+            columns,
+            from_stdin,
+            format: format.unwrap_or(CopyFormat::Text),
+        },
+    ))
 }

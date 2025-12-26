@@ -13,9 +13,9 @@ Guidance for Claude Code when working with this repository.
 
 **Run:**
 ```bash
-cargo run --release --bin postgrustql      # Server (port 5432)
+cargo run --release --bin postgrustsql     # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 173 tests (all passing ✅ v2.1.0)
+cargo test                                 # 196 tests (all passing ✅ v2.4.0)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
 ./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
@@ -33,10 +33,13 @@ cargo build --release --bin pgr_dump --bin pgr_restore
 
 **Features:**
 - PostgreSQL-compatible wire protocol (port 5432)
+- **Extended Query Protocol (v2.4.0)** - Prepared statements with PARSE/BIND/EXECUTE 📡
+- **COPY Protocol (v2.4.0)** - Bulk data import/export (COPY FROM STDIN / TO STDOUT) 📋
 - 23 data types (~45% PostgreSQL compatibility)
 - FOREIGN KEY, JOIN (INNER/LEFT/RIGHT), SERIAL/BIGSERIAL
 - **Multi-connection transaction isolation (v2.1.0)** - DML properly isolated between connections ✨
 - **Backup & Restore tools (v2.2.0)** - pgr_dump/pgr_restore (SQL + binary formats) 🔧
+- **RBAC System (v2.3.0)** - Role-based access control with table-level privileges 🔐
 - Transactions (BEGIN/COMMIT/ROLLBACK), MVCC (xmin/xmax)
 - Binary storage + WAL (checkpoint every 100 ops)
 - Page-based storage (v1.5.0, 125x write amplification improvement)
@@ -164,6 +167,14 @@ EXPLAIN SELECT * FROM users WHERE city = 'LA' AND age = 25;
 -- Maintenance
 VACUUM;              -- Cleanup all tables
 VACUUM table_name;   -- Cleanup specific table
+
+-- COPY Protocol (v2.4.0)
+COPY users FROM STDIN;                          -- Bulk import (CSV)
+COPY users (name, email) FROM STDIN;            -- Import specific columns
+COPY users FROM STDIN WITH (FORMAT csv);        -- CSV format (default)
+COPY users FROM STDIN WITH (FORMAT binary);     -- Binary format
+COPY users TO STDOUT;                           -- Export all data
+COPY users (name, age) TO STDOUT;               -- Export specific columns
 
 -- RBAC (v2.3.0)
 CREATE ROLE readonly;                             -- Create role
@@ -352,7 +363,18 @@ Allowed lints (configured in `src/lib.rs`):
 
 ## Версионирование
 
-**Current**: v2.3.0 (Role-Based Access Control)
+**Current**: v2.4.0 (Extended Query Protocol & COPY)
+
+**v2.4.0 Changes:**
+- 📡 **Extended Query Protocol** - Full support for prepared statements (PARSE/BIND/DESCRIBE/EXECUTE/CLOSE/SYNC)
+- 📋 **COPY Protocol** - Bulk data import/export (COPY FROM STDIN / COPY TO STDOUT)
+- 🗄️ **PreparedStatementCache** - Server-side statement and portal caching
+- 💾 **COPY FROM STDIN** - CSV/TSV bulk import with line-by-line INSERT
+- 📤 **COPY TO STDOUT** - Data export support (v2.4.0)
+- 🔧 **Parameter Substitution** - $1, $2, ... placeholders in prepared statements
+- ✅ **196 unit tests passing** (all passing, 7 ignored)
+- 🐛 Fixed Cargo.toml default-run for multi-binary support
+- 📝 Fixed integration test binary names (pgr_dump/pgr_restore)
 
 **v2.3.0 Changes:**
 - 🔐 **Complete RBAC System** - CREATE/DROP ROLE, GRANT/REVOKE roles

@@ -140,6 +140,19 @@ pub enum Statement {
     DropView {
         name: String,
     },
+    // COPY protocol (v2.4.0)
+    Copy {
+        table: String,
+        columns: Option<Vec<String>>,
+        from_stdin: bool,  // true = FROM STDIN, false = TO STDOUT
+        format: CopyFormat,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CopyFormat {
+    Text,   // CSV/TSV
+    Binary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

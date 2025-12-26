@@ -233,6 +233,13 @@ impl QueryExecutor {
                 db.create_enum(name.clone(), values)?;
                 Ok(QueryResult::Success(format!("Type '{name}' created successfully")))
             }
+            // COPY protocol (v2.4.0)
+            // COPY is handled through PostgreSQL protocol in server.rs, not here
+            Statement::Copy { .. } => {
+                Err(DatabaseError::ParseError(
+                    "COPY must be executed through PostgreSQL protocol, not as a direct statement".to_string()
+                ))
+            }
         }
     }
 

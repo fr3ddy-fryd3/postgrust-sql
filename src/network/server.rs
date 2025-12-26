@@ -1,9 +1,10 @@
 use crate::executor::{QueryExecutor, QueryResult};
 use crate::network::pg_protocol::{self, Message, StartupMessage, frontend, transaction_status};
+use crate::network::prepared_statements::{PreparedStatementCache, substitute_parameters};
 use crate::parser::parse_statement;
 use crate::storage::StorageEngine;
 use crate::transaction::{GlobalTransactionManager, Transaction};
-use crate::types::{DatabaseError, ServerInstance};
+use crate::types::{DatabaseError, ServerInstance, Value};
 use comfy_table::{Cell, Table as ComfyTable, presets::UTF8_FULL};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,19 +13,20 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
 /// Контекст сессии пользователя
-#[derive(Clone)]
 struct SessionContext {
     username: String,
     database_name: String,
     is_authenticated: bool,
+    prepared_statements: PreparedStatementCache, // v2.4.0: Extended Query Protocol
 }
 
 impl SessionContext {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
             username: String::new(),
             database_name: String::new(),
             is_authenticated: false,
+            prepared_statements: PreparedStatementCache::new(),
         }
     }
 
@@ -967,6 +969,143 @@ impl Server {
                                                 .send(&mut writer)
                                                 .await?;
                                         }
+                                        // COPY protocol (v2.4.0)
+                                        crate::parser::Statement::Copy { table, columns, from_stdin, format } => {
+                                            use crate::parser::CopyFormat;
+
+                                            if !from_stdin {
+                                                Message::error_response("COPY TO STDOUT not yet implemented")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                Message::ready_for_query(transaction_status::IDLE)
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                continue;
+                                            }
+
+                                            if format == CopyFormat::Binary {
+                                                Message::error_response("COPY binary format not yet implemented")
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                Message::ready_for_query(transaction_status::IDLE)
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                continue;
+                                            }
+
+                                            // Get table to determine column count
+                                            let table_obj = db.get_table(&table);
+                                            if table_obj.is_none() {
+                                                Message::error_response(&format!("Table '{table}' not found"))
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                Message::ready_for_query(transaction_status::IDLE)
+                                                    .send(&mut writer)
+                                                    .await?;
+                                                continue;
+                                            }
+
+                                            let table_obj = table_obj.unwrap();
+                                            let num_columns = if let Some(ref cols) = columns {
+                                                cols.len() as i16
+                                            } else {
+                                                table_obj.columns.len() as i16
+                                            };
+
+                                            // Send CopyInResponse - server ready to receive data
+                                            Message::copy_in_response(0, num_columns) // 0 = text format
+                                                .send(&mut writer)
+                                                .await?;
+
+                                            // Read COPY data in a loop until CopyDone or CopyFail
+                                            let mut copy_buffer = String::new();
+                                            let mut rows_inserted = 0;
+
+                                            loop {
+                                                let (msg_type, data) = match pg_protocol::read_frontend_message(&mut reader).await {
+                                                    Ok(msg) => msg,
+                                                    Err(_) => break,
+                                                };
+
+                                                match msg_type {
+                                                    frontend::COPY_DATA => {
+                                                        // Accumulate data
+                                                        if let Ok(chunk) = String::from_utf8(data) {
+                                                            copy_buffer.push_str(&chunk);
+                                                        }
+                                                    }
+                                                    frontend::COPY_DONE => {
+                                                        // Process all accumulated data
+                                                        for line in copy_buffer.lines() {
+                                                            if line.trim().is_empty() {
+                                                                continue;
+                                                            }
+
+                                                            // Simple CSV parsing - split by comma
+                                                            let values: Vec<&str> = line.split(',').collect();
+
+                                                            // Convert to Value types (simplified - all as Text)
+                                                            let value_objs: Vec<Value> = values
+                                                                .iter()
+                                                                .map(|v| Value::Text(v.trim().to_string()))
+                                                                .collect();
+
+                                                            // Insert into table
+                                                            let insert_stmt = crate::parser::Statement::Insert {
+                                                                table: table.clone(),
+                                                                columns: columns.clone(),
+                                                                values: value_objs,
+                                                            };
+
+                                                            let db_storage = database_storage
+                                                                .as_ref()
+                                                                .expect("database_storage required");
+                                                            let mut db_storage_guard = db_storage.lock().await;
+                                                            let mut storage_guard = storage.lock().await;
+
+                                                            match QueryExecutor::execute(
+                                                                db,
+                                                                insert_stmt,
+                                                                Some(&mut *storage_guard),
+                                                                &tx_manager,
+                                                                &mut db_storage_guard,
+                                                                transaction.tx_id(),
+                                                            ) {
+                                                                Ok(_) => rows_inserted += 1,
+                                                                Err(e) => {
+                                                                    Message::error_response(&format!("COPY error: {e}"))
+                                                                        .send(&mut writer)
+                                                                        .await?;
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Send CommandComplete
+                                                        Message::command_complete(&format!("COPY {rows_inserted}"))
+                                                            .send(&mut writer)
+                                                            .await?;
+                                                        break;
+                                                    }
+                                                    frontend::COPY_FAIL => {
+                                                        Message::error_response("COPY failed by client")
+                                                            .send(&mut writer)
+                                                            .await?;
+                                                        break;
+                                                    }
+                                                    _ => {
+                                                        Message::error_response(&format!("Unexpected message during COPY: {msg_type}"))
+                                                            .send(&mut writer)
+                                                            .await?;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+
+                                            Message::ready_for_query(transaction_status::IDLE)
+                                                .send(&mut writer)
+                                                .await?;
+                                        }
                                         _ => {
                                             let mut storage_guard = storage.lock().await;
                                             let storage_option = if transaction.is_active() {
@@ -1053,6 +1192,195 @@ impl Server {
                             Message::ready_for_query(status).send(&mut writer).await?;
                         }
                     }
+                }
+                // Extended Query Protocol (v2.4.0)
+                frontend::PARSE => {
+                    match pg_protocol::ParseMessage::from_data(&data) {
+                        Ok(parse_msg) => {
+                            // Store the prepared statement
+                            session.prepared_statements.add_statement(
+                                parse_msg.statement_name.clone(),
+                                parse_msg.query.clone(),
+                                parse_msg.param_types.clone(),
+                            );
+
+                            // Try to parse the statement now for validation
+                            if !parse_msg.query.is_empty() {
+                                if let Ok(stmt) = parse_statement(&parse_msg.query) {
+                                    if let Some(prep_stmt) = session.prepared_statements.get_statement_mut(&parse_msg.statement_name) {
+                                        prep_stmt.statement = Some(stmt);
+                                    }
+                                }
+                            }
+
+                            // Send ParseComplete
+                            Message::parse_complete().send(&mut writer).await?;
+                        }
+                        Err(e) => {
+                            Message::error_response(&format!("Parse error: {e}"))
+                                .send(&mut writer)
+                                .await?;
+                        }
+                    }
+                }
+                frontend::BIND => {
+                    match pg_protocol::BindMessage::from_data(&data) {
+                        Ok(bind_msg) => {
+                            // Convert binary parameter values to Value enum
+                            let mut param_values = Vec::new();
+                            for param_bytes in &bind_msg.param_values {
+                                match param_bytes {
+                                    None => param_values.push(None),
+                                    Some(bytes) => {
+                                        // Simple text format parsing - convert bytes to string
+                                        let value_str = String::from_utf8_lossy(bytes);
+                                        // For simplicity, store as Text (proper type inference would be more complex)
+                                        param_values.push(Some(Value::Text(value_str.to_string())));
+                                    }
+                                }
+                            }
+
+                            // Store the portal
+                            session.prepared_statements.add_portal(
+                                bind_msg.portal_name.clone(),
+                                bind_msg.statement_name.clone(),
+                                param_values,
+                            );
+
+                            // Send BindComplete
+                            Message::bind_complete().send(&mut writer).await?;
+                        }
+                        Err(e) => {
+                            Message::error_response(&format!("Bind error: {e}"))
+                                .send(&mut writer)
+                                .await?;
+                        }
+                    }
+                }
+                frontend::DESCRIBE => {
+                    match pg_protocol::DescribeMessage::from_data(&data) {
+                        Ok(_desc_msg) => {
+                            // For now, we don't provide detailed column descriptions
+                            // Just send NoData (statement has no result columns)
+                            Message::no_data().send(&mut writer).await?;
+                        }
+                        Err(e) => {
+                            Message::error_response(&format!("Describe error: {e}"))
+                                .send(&mut writer)
+                                .await?;
+                        }
+                    }
+                }
+                frontend::EXECUTE => {
+                    match pg_protocol::ExecuteMessage::from_data(&data) {
+                        Ok(exec_msg) => {
+                            // Get the portal
+                            let portal = session.prepared_statements.get_portal(&exec_msg.portal_name).cloned();
+
+                            if let Some(portal) = portal {
+                                // Get the prepared statement
+                                let prep_stmt = session.prepared_statements.get_statement(&portal.statement_name).cloned();
+
+                                if let Some(prep_stmt) = prep_stmt {
+                                    // Substitute parameters in the query
+                                    let query = substitute_parameters(&prep_stmt.query, &portal.param_values);
+
+                                    // Execute the query (similar to QUERY handling)
+                                    match parse_statement(&query) {
+                                        Ok(stmt) => {
+                                            let mut inst = instance.lock().await;
+                                            let db = inst.get_database_mut(&session.database_name);
+
+                                            if let Some(db) = db {
+                                                let db_storage = database_storage
+                                                    .as_ref()
+                                                    .expect("v2.0.0: database_storage is required");
+                                                let mut db_storage_guard = db_storage.lock().await;
+                                                let mut storage_guard = storage.lock().await;
+
+                                                match QueryExecutor::execute(
+                                                    db,
+                                                    stmt,
+                                                    Some(&mut *storage_guard),
+                                                    &tx_manager,
+                                                    &mut db_storage_guard,
+                                                    transaction.tx_id(),
+                                                ) {
+                                                    Ok(result) => {
+                                                        Self::send_postgres_result(result, &mut writer).await?;
+                                                    }
+                                                    Err(e) => {
+                                                        Message::error_response(&format!("{e}"))
+                                                            .send(&mut writer)
+                                                            .await?;
+                                                    }
+                                                }
+                                            } else {
+                                                Message::error_response(&format!("Database '{}' not found", session.database_name))
+                                                    .send(&mut writer)
+                                                    .await?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            Message::error_response(&format!("{e}"))
+                                                .send(&mut writer)
+                                                .await?;
+                                        }
+                                    }
+                                } else {
+                                    Message::error_response(&format!("Prepared statement '{}' not found", portal.statement_name))
+                                        .send(&mut writer)
+                                        .await?;
+                                }
+                            } else {
+                                Message::error_response(&format!("Portal '{}' not found", exec_msg.portal_name))
+                                    .send(&mut writer)
+                                    .await?;
+                            }
+                        }
+                        Err(e) => {
+                            Message::error_response(&format!("Execute error: {e}"))
+                                .send(&mut writer)
+                                .await?;
+                        }
+                    }
+                }
+                frontend::CLOSE => {
+                    match pg_protocol::CloseMessage::from_data(&data) {
+                        Ok(close_msg) => {
+                            let success = if close_msg.close_type == 'S' {
+                                // Close statement
+                                session.prepared_statements.remove_statement(&close_msg.name)
+                            } else {
+                                // Close portal
+                                session.prepared_statements.remove_portal(&close_msg.name)
+                            };
+
+                            if success {
+                                Message::close_complete().send(&mut writer).await?;
+                            } else {
+                                Message::error_response(&format!("{} '{}' not found",
+                                    if close_msg.close_type == 'S' { "Statement" } else { "Portal" },
+                                    close_msg.name))
+                                    .send(&mut writer)
+                                    .await?;
+                            }
+                        }
+                        Err(e) => {
+                            Message::error_response(&format!("Close error: {e}"))
+                                .send(&mut writer)
+                                .await?;
+                        }
+                    }
+                }
+                frontend::SYNC => {
+                    // Send ReadyForQuery
+                    let tx_status = if transaction.is_active() {
+                        transaction_status::IN_TRANSACTION
+                    } else {
+                        transaction_status::IDLE
+                    };
+                    Message::ready_for_query(tx_status).send(&mut writer).await?;
                 }
                 frontend::TERMINATE => {
                     break;

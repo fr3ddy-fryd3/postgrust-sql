@@ -23,6 +23,7 @@ pub use statement::{
     GrantObject,     // v2.3.0
     CaseExpression,  // v1.10.0
     WhenClause,      // v1.10.0
+    CopyFormat,      // v2.4.0
 };
 
 // Main parser function that combines all parsers
@@ -58,6 +59,7 @@ pub fn parse_statement(input: &str) -> Result<Statement, String> {
             ddl::revoke,
             ddl::parse_create_view,  // v1.10.0 - before create_table to avoid conflicts
             ddl::parse_drop_view,    // v1.10.0
+            ddl::parse_copy,         // v2.4.0
             ddl::create_table,
             ddl::drop_table,
             ddl::alter_table,
