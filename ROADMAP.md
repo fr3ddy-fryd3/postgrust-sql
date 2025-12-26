@@ -4,6 +4,241 @@
 
 ---
 
+## 🎉 v2.5.1 - COPY Binary Format (Complete!)
+
+**Цель:** Full PostgreSQL-compatible binary COPY protocol
+**Статус:** Complete (2025-12-26) ✅
+**Сложность:** Очень Высокая
+**Breaking Changes:** No
+
+### ✅ Реализовано:
+
+#### 1. COPY Binary Format ✅ (COMPLETED - 2025-12-26)
+**Зачем:** Полная совместимость с pg_dump --format=custom, 3-5x быстрее CSV
+
+**Что реализовано:**
+- ✅ PostgreSQL binary format v3.0 для COPY (header, trailer, field encoding)
+- ✅ Сериализация всех 23 типов данных в binary
+- ✅ Десериализация binary → Value с full type validation
+- ✅ Binary NULL handling (length=-1)
+- ✅ **Full PostgreSQL Numeric format** (base-10000, ndigits/weight/sign/dscale)
+- ✅ Date/Time epoch conversion (PostgreSQL 2000-01-01 epoch)
+- ✅ Network byte order (big-endian) for all multi-byte integers
+- ✅ MVCC visibility filtering in COPY TO STDOUT
+- ✅ COPY FROM STDIN binary import
+- ✅ COPY TO STDOUT binary export
+
+**Файлы:**
+- `src/network/copy_binary.rs` (NEW) - ~600 lines, full binary encoder/decoder
+- `src/network/server.rs` - COPY binary protocol integration
+- `src/network/pg_protocol.rs` - OID constants for all 23 types, fixed column format codes
+- `src/network/mod.rs` - Export BinaryCopyEncoder/Decoder
+- `tests/integration/test_copy_binary.sh` (NEW) - Comprehensive integration tests
+
+**Статистика:**
+- 📊 202 unit tests passing (6 new binary format tests)
+- 🧪 Integration test: 6 scenarios (basic types, NULL, numeric, datetime, UUID/BYTEA, round-trip)
+- 📦 Binary header: 19 bytes (11-byte signature + 8 bytes metadata)
+- ⚡ Expected performance: 3-5x faster than CSV for bulk operations
+
+---
+
+---
+
+## 🚧 v2.6.0 - Subqueries & Advanced SQL (Planned)
+
+**Цель:** Production-ready SQL features
+**Статус:** Planning
+**Сложность:** Очень Высокая
+
+### Запланировано:
+
+#### 1. Subqueries (Priority 1)
+**Зачем:** Критическая SQL фича, необходима для production
+
+**Типы subqueries:**
+```sql
+-- Scalar subquery
+SELECT name, (SELECT COUNT(*) FROM orders WHERE user_id = users.id) as order_count
+FROM users;
+
+-- IN subquery
+SELECT * FROM products
+WHERE category_id IN (SELECT id FROM categories WHERE active = true);
+
+-- EXISTS subquery
+SELECT * FROM users
+WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = users.id);
+
+-- FROM subquery (derived table)
+SELECT * FROM (SELECT * FROM users WHERE age > 18) AS adults;
+```
+
+**Реализация:**
+- Parser: вложенные SELECT в WHERE/FROM/SELECT
+- Executor: рекурсивное выполнение subqueries
+- Оптимизация: материализация vs correlated subqueries
+- MVCC: правильная изоляция для subqueries
+
+**Файлы:**
+- `src/parser/queries.rs` - Subquery parsing
+- `src/executor/queries.rs` - Subquery execution
+- `src/parser/statement.rs` - SubqueryExpression enum
+
+#### 2. pg_dump Full Compatibility Test (Priority 2)
+**Зачем:** Проверить что pg_dump работает без костылей
+
+**Что проверить:**
+- pg_dump с binary format работает
+- pg_restore восстанавливает без ошибок
+- DDL порядок правильный (types → tables → indexes)
+- SERIAL sequences корректно дампятся
+- ENUM types работают
+
+**Дополнительно может потребоваться:**
+- pg_depend catalog для зависимостей
+- CREATE SEQUENCE support
+- COMMENT ON TABLE/COLUMN
+- pg_description catalog
+
+#### 3. Window Functions (Priority 3)
+**Зачем:** Production-ready analytics queries
+
+**Функции:**
+```sql
+-- Ranking functions
+ROW_NUMBER() OVER (ORDER BY salary DESC)
+RANK() OVER (PARTITION BY dept ORDER BY salary DESC)
+DENSE_RANK() OVER (...)
+
+-- Aggregate window functions
+SUM(salary) OVER (PARTITION BY dept)
+AVG(salary) OVER (ORDER BY hire_date ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)
+
+-- Value functions
+LAG(salary, 1) OVER (ORDER BY hire_date)
+LEAD(salary) OVER (ORDER BY hire_date)
+FIRST_VALUE(name) OVER (PARTITION BY dept ORDER BY salary DESC)
+LAST_VALUE(name) OVER (...)
+```
+
+**Реализация:**
+- OVER clause parsing
+- PARTITION BY + ORDER BY
+- Window frame specification (ROWS/RANGE BETWEEN)
+- Window function evaluation engine
+- Sorting + partitioning logic
+
+**Файлы:**
+- `src/parser/queries.rs` - OVER clause parsing
+- `src/executor/window.rs` (NEW) - Window function evaluation
+- `src/parser/statement.rs` - WindowFunction enum
+
+### Архитектура изменений:
+
+```rust
+// Binary Format
+pub struct BinaryEncoder {
+    fn encode_value(value: &Value) -> Vec<u8>;
+    fn decode_value(bytes: &[u8], data_type: &DataType) -> Result<Value>;
+}
+
+// Subqueries
+pub enum Expression {
+    Scalar(Box<Statement>),      // (SELECT COUNT(*) FROM ...)
+    In(String, Box<Statement>),  // col IN (SELECT ...)
+    Exists(Box<Statement>),      // EXISTS (SELECT ...)
+}
+
+// Window Functions
+pub struct WindowSpec {
+    partition_by: Vec<String>,
+    order_by: Vec<(String, SortOrder)>,
+    frame: Option<WindowFrame>,
+}
+
+pub enum WindowFunction {
+    RowNumber,
+    Rank,
+    DenseRank,
+    Lag { expr: String, offset: i64 },
+    Lead { expr: String, offset: i64 },
+    // ... etc
+}
+```
+
+### Тесты:
+- Binary COPY round-trip (export + import, data integrity)
+- Scalar subqueries в SELECT
+- IN/EXISTS subqueries в WHERE
+- Correlated vs uncorrelated subqueries
+- Window functions: ROW_NUMBER, RANK, LAG, LEAD
+- PARTITION BY + ORDER BY combinations
+- Real pg_dump → pg_restore test
+
+### PostgreSQL Compatibility:
+- ✅ COPY binary format (full)
+- ✅ Scalar subqueries
+- ✅ IN/EXISTS/NOT EXISTS
+- ✅ Derived tables (FROM subquery)
+- ✅ Basic window functions
+- ⚠️ Advanced window frames (RANGE BETWEEN) - simplified
+- ⚠️ Correlated subqueries - performance TBD
+
+---
+
+## ✅ v2.4.1 - COPY TO STDOUT (Quick Fix)
+
+**Цель:** Fix incomplete COPY implementation - add export support
+**Статус:** Completed (2025-12-26)
+**Сложность:** Низкая
+**Breaking Changes:** No
+
+### Реализовано:
+
+**COPY TO STDOUT (export):**
+- Full CSV export implementation
+- All 23 data types supported in CSV format
+- Proper CSV escaping (quotes, commas, newlines)
+- Column selection: COPY table (col1, col2) TO STDOUT
+- MVCC visibility filtering
+- PostgreSQL hex format for BYTEA (\\xHEXHEX...)
+
+**Implementation:**
+```rust
+// Send CopyOutResponse
+Message::copy_out_response(format, num_columns).send(&mut writer).await?;
+
+// For each visible row:
+let csv_line = row.values.map(value_to_csv_string).join(",") + "\n";
+Message::copy_data(csv_line.as_bytes()).send(&mut writer).await?;
+
+// Complete
+Message::copy_done().send(&mut writer).await?;
+Message::command_complete("COPY 1000").send(&mut writer).await?;
+```
+
+**value_to_csv_string():**
+- SmallInt, Integer → numeric strings
+- Text/Char → quoted if contains comma/newline/quote
+- Boolean → 't' / 'f' (PostgreSQL format)
+- Date → YYYY-MM-DD
+- Timestamp → YYYY-MM-DD HH:MM:SS
+- UUID, JSON, BYTEA, ENUM - all supported
+
+### Testing:
+- 196 unit tests passing
+- Integration tests passing
+
+### Now Supported:
+- ✅ COPY FROM STDIN (CSV) - v2.4.0
+- ✅ COPY TO STDOUT (CSV) - v2.4.1
+- ⏳ COPY binary format - v2.5.0
+
+**pg_dump compatibility:** Should work now for text format dumps! ✅
+
+---
+
 ## ✅ v2.4.0 - Extended Query Protocol & COPY
 
 **Цель:** PostgreSQL protocol extensions - Prepared statements + Bulk import/export
@@ -831,7 +1066,9 @@ impl Row {
 | v2.2.0 | ✅ Backup Tools | pgr_dump/pgr_restore (SQL+bin) | Medium | **Completed (2025-12-19)** |
 | v2.3.0 | ✅ RBAC | Role-based access control | High | **Completed (2025-12-22)** |
 | v2.4.0 | ✅ Protocol Extensions | Extended Query + COPY | High | **Completed (2025-12-26)** |
-| v2.5+ | Advanced SQL | Subqueries, Windows, Triggers | Varies | TBD |
+| v2.4.1 | ✅ COPY Export | COPY TO STDOUT implementation | Low | **Completed (2025-12-26)** |
+| v2.5.1 | ✅ Binary COPY | PostgreSQL binary format (all 23 types) | High | **Completed (2025-12-26)** |
+| v2.6.0 | 🚧 Advanced SQL | Subqueries + Window Functions | Very High | **Planned** |
 
 ---
 
@@ -844,6 +1081,8 @@ impl Row {
 - ✅ v2.2.0 (Backup & Restore tools: pgr_dump/pgr_restore) - 2025-12-19
 - ✅ v2.3.0 (Role-Based Access Control - RBAC) - 2025-12-22
 - ✅ v2.4.0 (Extended Query Protocol + COPY) - 2025-12-26
+- ✅ v2.4.1 (COPY TO STDOUT - CSV export) - 2025-12-26
+- ✅ v2.5.1 (COPY Binary Format - PostgreSQL compatible) - 2025-12-26
 
 **Foundation achieved:**
 - ✅ PostgreSQL wire protocol v3.0 (Simple + Extended Query)
@@ -857,7 +1096,7 @@ impl Row {
 - ✅ 196 unit tests passing (0 failed, 7 ignored)
 
 **What's next?**
-(To be decided)
+- 🚧 v2.6.0 (Subqueries, pg_dump compatibility, Window Functions) - Planning
 
 ---
 

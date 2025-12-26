@@ -974,16 +974,7 @@ impl Server {
                                             use crate::parser::CopyFormat;
 
                                             if !from_stdin {
-                                                // COPY TO STDOUT (export) - v2.4.1
-                                                if format == CopyFormat::Binary {
-                                                    Message::error_response("COPY binary format not yet implemented")
-                                                        .send(&mut writer)
-                                                        .await?;
-                                                    Message::ready_for_query(transaction_status::IDLE)
-                                                        .send(&mut writer)
-                                                        .await?;
-                                                    continue;
-                                                }
+                                                // COPY TO STDOUT (export) - v2.4.1 CSV, v2.5.0 Binary
 
                                                 // Get table
                                                 let table_obj = db.get_table(&table);
@@ -1003,11 +994,6 @@ impl Server {
                                                 } else {
                                                     table_obj.columns.len() as i16
                                                 };
-
-                                                // Send CopyOutResponse - server ready to send data
-                                                Message::copy_out_response(0, num_columns) // 0 = text format
-                                                    .send(&mut writer)
-                                                    .await?;
 
                                                 // Get all rows from table
                                                 let db_storage = database_storage
@@ -1052,6 +1038,80 @@ impl Server {
                                                     // Export all columns
                                                     (0..table_obj.columns.len()).collect()
                                                 };
+
+                                                // Handle binary vs CSV format
+                                                if format == CopyFormat::Binary {
+                                                    // Binary export (v2.5.0)
+                                                    use crate::network::copy_binary::BinaryCopyEncoder;
+
+                                                    // Send CopyOutResponse with format=1 (binary)
+                                                    Message::copy_out_response(1, num_columns)
+                                                        .send(&mut writer)
+                                                        .await?;
+
+                                                    // Send binary header
+                                                    Message::copy_data(&BinaryCopyEncoder::write_header())
+                                                        .send(&mut writer)
+                                                        .await?;
+
+                                                    // Export rows in binary format
+                                                    for row in rows {
+                                                        // Filter visible rows (MVCC)
+                                                        let tx_id = transaction.tx_id().unwrap_or(0);
+                                                        if !row.is_visible(tx_id) {
+                                                            continue;
+                                                        }
+
+                                                        // Extract exported column values
+                                                        let row_values: Vec<crate::types::Value> = export_columns
+                                                            .iter()
+                                                            .map(|&idx| {
+                                                                if idx < row.values.len() {
+                                                                    row.values[idx].clone()
+                                                                } else {
+                                                                    crate::types::Value::Null
+                                                                }
+                                                            })
+                                                            .collect();
+
+                                                        // Encode row to binary
+                                                        let binary_row = BinaryCopyEncoder::encode_row(&row_values);
+
+                                                        // Send as CopyData
+                                                        Message::copy_data(&binary_row)
+                                                            .send(&mut writer)
+                                                            .await?;
+
+                                                        rows_exported += 1;
+                                                    }
+
+                                                    // Send binary trailer
+                                                    Message::copy_data(&BinaryCopyEncoder::write_trailer())
+                                                        .send(&mut writer)
+                                                        .await?;
+
+                                                    // Send CopyDone
+                                                    Message::copy_done()
+                                                        .send(&mut writer)
+                                                        .await?;
+
+                                                    // Send CommandComplete
+                                                    Message::command_complete(&format!("COPY {rows_exported}"))
+                                                        .send(&mut writer)
+                                                        .await?;
+
+                                                    Message::ready_for_query(transaction_status::IDLE)
+                                                        .send(&mut writer)
+                                                        .await?;
+
+                                                    continue;
+                                                }
+
+                                                // CSV export (v2.4.1)
+                                                // Send CopyOutResponse with format=0 (text)
+                                                Message::copy_out_response(0, num_columns)
+                                                    .send(&mut writer)
+                                                    .await?;
 
                                                 // Convert rows to CSV and send via CopyData
                                                 for row in rows {
@@ -1100,16 +1160,7 @@ impl Server {
                                                 continue;
                                             }
 
-                                            // COPY FROM STDIN (import)
-                                            if format == CopyFormat::Binary {
-                                                Message::error_response("COPY binary format not yet implemented")
-                                                    .send(&mut writer)
-                                                    .await?;
-                                                Message::ready_for_query(transaction_status::IDLE)
-                                                    .send(&mut writer)
-                                                    .await?;
-                                                continue;
-                                            }
+                                            // COPY FROM STDIN (import) - v2.4.1 CSV, v2.5.0 Binary
 
                                             // Get table to determine column count
                                             let table_obj = db.get_table(&table);
@@ -1130,8 +1181,133 @@ impl Server {
                                                 table_obj.columns.len() as i16
                                             };
 
-                                            // Send CopyInResponse - server ready to receive data
-                                            Message::copy_in_response(0, num_columns) // 0 = text format
+                                            // Determine which columns to import
+                                            let import_columns: Vec<crate::core::Column> = if let Some(ref cols) = columns {
+                                                cols.iter()
+                                                    .filter_map(|col_name| {
+                                                        table_obj.columns.iter().find(|c| &c.name == col_name).cloned()
+                                                    })
+                                                    .collect()
+                                            } else {
+                                                table_obj.columns.clone()
+                                            };
+
+                                            // Handle binary vs CSV format
+                                            if format == CopyFormat::Binary {
+                                                // Binary import (v2.5.0)
+                                                use crate::network::copy_binary::BinaryCopyDecoder;
+                                                use std::io::Cursor;
+
+                                                // Send CopyInResponse with format=1 (binary)
+                                                Message::copy_in_response(1, num_columns)
+                                                    .send(&mut writer)
+                                                    .await?;
+
+                                                // Accumulate binary data
+                                                let mut binary_buffer = Vec::new();
+                                                let mut rows_inserted = 0;
+
+                                                // Read COPY data loop
+                                                loop {
+                                                    let (msg_type, data) = match pg_protocol::read_frontend_message(&mut reader).await {
+                                                        Ok(msg) => msg,
+                                                        Err(_) => break,
+                                                    };
+
+                                                    match msg_type {
+                                                        frontend::COPY_DATA => {
+                                                            binary_buffer.extend_from_slice(&data);
+                                                        }
+                                                        frontend::COPY_DONE => {
+                                                            // Process accumulated binary data
+                                                            let mut cursor = Cursor::new(binary_buffer.as_slice());
+
+                                                            // Read and validate header
+                                                            if let Err(e) = BinaryCopyDecoder::read_header(&mut cursor) {
+                                                                Message::error_response(&format!("COPY binary header error: {e}"))
+                                                                    .send(&mut writer)
+                                                                    .await?;
+                                                                break;
+                                                            }
+
+                                                            // Read rows until trailer
+                                                            loop {
+                                                                match BinaryCopyDecoder::decode_row(&mut cursor, &import_columns) {
+                                                                    Ok(Some(values)) => {
+                                                                        // Insert row
+                                                                        let insert_stmt = crate::parser::Statement::Insert {
+                                                                            table: table.clone(),
+                                                                            columns: columns.clone(),
+                                                                            values,
+                                                                        };
+
+                                                                        let db_storage = database_storage
+                                                                            .as_ref()
+                                                                            .expect("database_storage required");
+                                                                        let mut db_storage_guard = db_storage.lock().await;
+                                                                        let mut storage_guard = storage.lock().await;
+
+                                                                        match QueryExecutor::execute(
+                                                                            db,
+                                                                            insert_stmt,
+                                                                            Some(&mut *storage_guard),
+                                                                            &tx_manager,
+                                                                            &mut db_storage_guard,
+                                                                            transaction.tx_id(),
+                                                                        ) {
+                                                                            Ok(_) => rows_inserted += 1,
+                                                                            Err(e) => {
+                                                                                Message::error_response(&format!("COPY insert error: {e}"))
+                                                                                    .send(&mut writer)
+                                                                                    .await?;
+                                                                                break;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Ok(None) => {
+                                                                        // EOF marker reached
+                                                                        break;
+                                                                    }
+                                                                    Err(e) => {
+                                                                        Message::error_response(&format!("COPY decode error: {e}"))
+                                                                            .send(&mut writer)
+                                                                            .await?;
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            // Send CommandComplete
+                                                            Message::command_complete(&format!("COPY {rows_inserted}"))
+                                                                .send(&mut writer)
+                                                                .await?;
+                                                            break;
+                                                        }
+                                                        frontend::COPY_FAIL => {
+                                                            Message::error_response("COPY failed by client")
+                                                                .send(&mut writer)
+                                                                .await?;
+                                                            break;
+                                                        }
+                                                        _ => {
+                                                            Message::error_response(&format!("Unexpected message during COPY: {msg_type}"))
+                                                                .send(&mut writer)
+                                                                .await?;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                Message::ready_for_query(transaction_status::IDLE)
+                                                    .send(&mut writer)
+                                                    .await?;
+
+                                                continue;
+                                            }
+
+                                            // CSV import (v2.4.1)
+                                            // Send CopyInResponse with format=0 (text)
+                                            Message::copy_in_response(0, num_columns)
                                                 .send(&mut writer)
                                                 .await?;
 

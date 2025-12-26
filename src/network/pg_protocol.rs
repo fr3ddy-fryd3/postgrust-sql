@@ -55,11 +55,36 @@ pub mod transaction_status {
     pub const FAILED: u8 = b'E'; // In failed transaction
 }
 
-/// `PostgreSQL` data type OIDs (simplified)
+/// `PostgreSQL` data type OIDs (for COPY binary format and protocol compatibility)
 pub mod oid {
-    pub const INT4: i32 = 23;
-    pub const TEXT: i32 = 25;
-    pub const BOOL: i32 = 16;
+    // Numeric types
+    pub const INT2: i32 = 21;        // SmallInt
+    pub const INT4: i32 = 23;        // Integer (existing)
+    pub const INT8: i32 = 20;        // BigInt/BigSerial
+    pub const FLOAT8: i32 = 701;     // Real (f64)
+    pub const NUMERIC: i32 = 1700;   // Numeric(p,s) / Decimal
+
+    // String types
+    pub const TEXT: i32 = 25;        // Text (existing)
+    pub const BPCHAR: i32 = 1042;    // Char(n) - blank-padded char
+    pub const VARCHAR: i32 = 1043;   // Varchar(n)
+
+    // Boolean
+    pub const BOOL: i32 = 16;        // Boolean (existing)
+
+    // Date/Time types
+    pub const DATE: i32 = 1082;      // Date
+    pub const TIMESTAMP: i32 = 1114; // Timestamp (without timezone)
+    pub const TIMESTAMPTZ: i32 = 1184; // TimestampTz (with timezone)
+
+    // Special types
+    pub const UUID: i32 = 2950;      // UUID
+    pub const JSON: i32 = 114;       // JSON
+    pub const JSONB: i32 = 3802;     // JSONB
+    pub const BYTEA: i32 = 17;       // Bytea (binary data)
+
+    // Note: ENUM types use dynamically assigned OIDs per enum type
+    // Note: SERIAL/BIGSERIAL use INT4/INT8 at runtime
 }
 
 /// Error field codes
@@ -547,9 +572,9 @@ impl Message {
         let len_pos = msg.start(backend::COPY_IN_RESPONSE);
         msg.buf.put_u8(format); // 0 = text, 1 = binary
         msg.buf.put_i16(num_columns);
-        // Column format codes (all 0 for text)
+        // Column format codes (0=text, 1=binary for each column)
         for _ in 0..num_columns {
-            msg.buf.put_i16(0);
+            msg.buf.put_i16(i16::from(format)); // Use same format for all columns
         }
         msg.finish(len_pos);
         msg
@@ -561,10 +586,11 @@ impl Message {
     pub fn copy_out_response(format: u8, num_columns: i16) -> Self {
         let mut msg = Self::new();
         let len_pos = msg.start(backend::COPY_OUT_RESPONSE);
-        msg.buf.put_u8(format);
+        msg.buf.put_u8(format); // 0 = text, 1 = binary
         msg.buf.put_i16(num_columns);
+        // Column format codes (0=text, 1=binary for each column)
         for _ in 0..num_columns {
-            msg.buf.put_i16(0);
+            msg.buf.put_i16(i16::from(format)); // Use same format for all columns
         }
         msg.finish(len_pos);
         msg
