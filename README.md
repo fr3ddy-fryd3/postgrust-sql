@@ -33,10 +33,10 @@ cargo run --example cli
   - PARSE/BIND/DESCRIBE/EXECUTE/CLOSE/SYNC протокол
   - Server-side statement caching для производительности
   - Защита от SQL injection через параметризацию
-- **COPY Protocol** (v2.4.0 / v2.5.1): Массовый импорт/экспорт данных
+- **COPY Protocol** (v2.4.0 / v2.5.0): Массовый импорт/экспорт данных
   - COPY FROM STDIN для bulk import (CSV/TSV/Binary)
   - COPY TO STDOUT для экспорта данных (CSV/TSV/Binary)
-  - **Binary Format** (v2.5.1): PostgreSQL-compatible binary protocol, 3-5x быстрее CSV
+  - **Binary Format** (v2.5.0): PostgreSQL-compatible binary protocol, 3-5x быстрее CSV
   - Полная поддержка всех 23 типов данных в binary формате
   - 10-100x быстрее чем обычные INSERT
 - **Role-Based Access Control** (v2.3.0): Роли, владение таблицами, права доступа

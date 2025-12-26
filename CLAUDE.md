@@ -15,14 +15,14 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release --bin postgrustsql     # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 202 tests (all passing ✅ v2.5.1)
+cargo test                                 # 202 tests (all passing ✅ v2.5.0)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
 ./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
 ./tests/integration/test_extended_operators.sh  # Test extended WHERE operators
 ./tests/integration/test_explain.sh        # Test EXPLAIN command
 ./tests/integration/test_sql_expressions.sh # Test CASE & set operations (v1.10.0)
-./tests/integration/test_copy_binary.sh # Test COPY Binary Format (v2.5.1)
+./tests/integration/test_copy_binary.sh # Test COPY Binary Format (v2.5.0)
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 
 # Backup & Restore (v2.2.0)
@@ -364,9 +364,9 @@ Allowed lints (configured in `src/lib.rs`):
 
 ## Версионирование
 
-**Current**: v2.5.1 (COPY Binary Format)
+**Current**: v2.5.0 (COPY Binary Format)
 
-**v2.5.1 Changes:**
+**v2.5.0 Changes:**
 - 📦 **COPY Binary Format** - Full PostgreSQL-compatible binary protocol for 3-5x faster import/export
 - 🔢 **Full Numeric encoding** - PostgreSQL base-10000 format (ndigits/weight/sign/dscale)
 - 📡 **Binary COPY TO STDOUT** - Export all 23 data types in binary format
@@ -379,7 +379,7 @@ Allowed lints (configured in `src/lib.rs`):
 - 🏗️ **New module** - src/network/copy_binary.rs (~600 lines)
 - 🆔 **OID constants** - Full PostgreSQL type OID mapping for protocol compatibility
 
-**v2.4.1 Changes:**
+**v2.5.0 Implementation Phases:**
 - 📤 **COPY TO STDOUT** - Full CSV export implementation (was stub in v2.4.0)
 - 📊 **value_to_csv_string()** - Helper function supporting all 23 data types
 - ✅ **Proper CSV escaping** - Quotes, commas, newlines handled correctly

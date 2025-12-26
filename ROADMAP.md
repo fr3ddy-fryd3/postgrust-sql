@@ -4,7 +4,7 @@
 
 ---
 
-## 🎉 v2.5.1 - COPY Binary Format (Complete!)
+## 🎉 v2.5.0 - COPY Binary Format (Complete!)
 
 **Цель:** Full PostgreSQL-compatible binary COPY protocol
 **Статус:** Complete (2025-12-26) ✅
@@ -184,58 +184,6 @@ pub enum WindowFunction {
 - ✅ Basic window functions
 - ⚠️ Advanced window frames (RANGE BETWEEN) - simplified
 - ⚠️ Correlated subqueries - performance TBD
-
----
-
-## ✅ v2.4.1 - COPY TO STDOUT (Quick Fix)
-
-**Цель:** Fix incomplete COPY implementation - add export support
-**Статус:** Completed (2025-12-26)
-**Сложность:** Низкая
-**Breaking Changes:** No
-
-### Реализовано:
-
-**COPY TO STDOUT (export):**
-- Full CSV export implementation
-- All 23 data types supported in CSV format
-- Proper CSV escaping (quotes, commas, newlines)
-- Column selection: COPY table (col1, col2) TO STDOUT
-- MVCC visibility filtering
-- PostgreSQL hex format for BYTEA (\\xHEXHEX...)
-
-**Implementation:**
-```rust
-// Send CopyOutResponse
-Message::copy_out_response(format, num_columns).send(&mut writer).await?;
-
-// For each visible row:
-let csv_line = row.values.map(value_to_csv_string).join(",") + "\n";
-Message::copy_data(csv_line.as_bytes()).send(&mut writer).await?;
-
-// Complete
-Message::copy_done().send(&mut writer).await?;
-Message::command_complete("COPY 1000").send(&mut writer).await?;
-```
-
-**value_to_csv_string():**
-- SmallInt, Integer → numeric strings
-- Text/Char → quoted if contains comma/newline/quote
-- Boolean → 't' / 'f' (PostgreSQL format)
-- Date → YYYY-MM-DD
-- Timestamp → YYYY-MM-DD HH:MM:SS
-- UUID, JSON, BYTEA, ENUM - all supported
-
-### Testing:
-- 196 unit tests passing
-- Integration tests passing
-
-### Now Supported:
-- ✅ COPY FROM STDIN (CSV) - v2.4.0
-- ✅ COPY TO STDOUT (CSV) - v2.4.1
-- ⏳ COPY binary format - v2.5.0
-
-**pg_dump compatibility:** Should work now for text format dumps! ✅
 
 ---
 
@@ -1066,8 +1014,7 @@ impl Row {
 | v2.2.0 | ✅ Backup Tools | pgr_dump/pgr_restore (SQL+bin) | Medium | **Completed (2025-12-19)** |
 | v2.3.0 | ✅ RBAC | Role-based access control | High | **Completed (2025-12-22)** |
 | v2.4.0 | ✅ Protocol Extensions | Extended Query + COPY | High | **Completed (2025-12-26)** |
-| v2.4.1 | ✅ COPY Export | COPY TO STDOUT implementation | Low | **Completed (2025-12-26)** |
-| v2.5.1 | ✅ Binary COPY | PostgreSQL binary format (all 23 types) | High | **Completed (2025-12-26)** |
+| v2.5.0 | ✅ Binary COPY | PostgreSQL binary format (all 23 types) + COPY TO STDOUT | High | **Completed (2025-12-26)** |
 | v2.6.0 | 🚧 Advanced SQL | Subqueries + Window Functions | Very High | **Planned** |
 
 ---
@@ -1081,8 +1028,7 @@ impl Row {
 - ✅ v2.2.0 (Backup & Restore tools: pgr_dump/pgr_restore) - 2025-12-19
 - ✅ v2.3.0 (Role-Based Access Control - RBAC) - 2025-12-22
 - ✅ v2.4.0 (Extended Query Protocol + COPY) - 2025-12-26
-- ✅ v2.4.1 (COPY TO STDOUT - CSV export) - 2025-12-26
-- ✅ v2.5.1 (COPY Binary Format - PostgreSQL compatible) - 2025-12-26
+- ✅ v2.5.0 (COPY Binary Format + COPY TO STDOUT) - 2025-12-26
 
 **Foundation achieved:**
 - ✅ PostgreSQL wire protocol v3.0 (Simple + Extended Query)
@@ -1093,7 +1039,7 @@ impl Row {
 - ✅ Role-Based Access Control (RBAC)
 - ✅ Prepared statements (Extended Query Protocol)
 - ✅ Bulk import/export (COPY protocol)
-- ✅ 196 unit tests passing (0 failed, 7 ignored)
+- ✅ 202 unit tests passing (0 failed, 7 ignored)
 
 **What's next?**
 - 🚧 v2.6.0 (Subqueries, pg_dump compatibility, Window Functions) - Planning
