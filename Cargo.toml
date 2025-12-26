@@ -1,6 +1,6 @@
 [package]
 name = "postgrustql"
-version = "2.3.0"
+version = "2.5.0"
 edition = "2024"
 license = "MIT"
 authors = ["fr3ddy-fryd3 <fr3ddyfryd3@gmail.com>"]
