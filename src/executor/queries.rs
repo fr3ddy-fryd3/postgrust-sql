@@ -262,6 +262,9 @@ impl QueryExecutor {
                 SelectColumn::Aggregate(_) => {
                     panic!("Aggregate in regular select should not happen")
                 }
+                SelectColumn::Subquery { .. } => {
+                    return Err(DatabaseError::ParseError("Scalar subqueries in SELECT not yet implemented".to_string()));
+                }
             }
         }
 
@@ -295,6 +298,7 @@ impl QueryExecutor {
         // Get snapshot for READ COMMITTED isolation (v2.1.0)
         // Creates new snapshot before each statement
         let snapshot = tx_manager.get_snapshot();
+        let subquery_ctx = crate::executor::subquery::SubqueryContext::new();  // v2.6.0
 
         // Try to use index if available
         let use_index = Self::find_usable_index(db, &from, &filter);
@@ -337,9 +341,9 @@ impl QueryExecutor {
                     continue;
                 }
 
-                // Index already filtered by equality, but double-check condition
+                // Index already filtered by equality, but double-check condition (v2.6.0: subquery support)
                 if let Some(ref cond) = filter
-                    && !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                    && !ConditionEvaluator::evaluate_with_context(&table.columns, row, cond, db, tx_manager, database_storage, &subquery_ctx)? {
                         continue;
                     }
 
@@ -366,7 +370,7 @@ impl QueryExecutor {
                 }
 
                 if let Some(ref cond) = filter
-                    && !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                    && !ConditionEvaluator::evaluate_with_context(&table.columns, row, cond, db, tx_manager, database_storage, &subquery_ctx)? {
                         continue;
                     }
 
@@ -467,13 +471,14 @@ impl QueryExecutor {
         // Get snapshot for READ COMMITTED isolation (v2.1.0)
         // Creates new snapshot before each statement
         let snapshot = tx_manager.get_snapshot();
+        let subquery_ctx = crate::executor::subquery::SubqueryContext::new();  // v2.6.0
 
         // Get rows from PagedTable
         let paged_table = database_storage.get_paged_table(&from)
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
         let rows_vec = paged_table.get_all_rows()?;
 
-        // Collect visible rows that match the filter
+        // Collect visible rows that match the filter (v2.6.0: subquery support)
         let visible_rows: Vec<&Row> = rows_vec
             .iter()
             .filter(|row| {
@@ -484,7 +489,7 @@ impl QueryExecutor {
 
                 // Apply filter
                 if let Some(ref cond) = filter {
-                    ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond).unwrap_or(false)
+                    ConditionEvaluator::evaluate_with_context(&table.columns, row, cond, db, tx_manager, database_storage, &subquery_ctx).unwrap_or(false)
                 } else {
                     true
                 }
@@ -510,6 +515,11 @@ impl QueryExecutor {
                 SelectColumn::Case(_) => {
                     return Err(DatabaseError::ParseError(
                         "Cannot use CASE expressions with aggregates without GROUP BY".to_string(),
+                    ));
+                }
+                SelectColumn::Subquery { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Scalar subqueries in SELECT not yet implemented".to_string(),
                     ));
                 }
             }
@@ -687,6 +697,7 @@ impl QueryExecutor {
 
         // Get snapshot for READ COMMITTED isolation (v2.1.0)
         let snapshot = tx_manager.get_snapshot();
+        let subquery_ctx = crate::executor::subquery::SubqueryContext::new();  // v2.6.0
 
         // Get indices for GROUP BY columns
         let group_by_indices: Vec<usize> = group_by
@@ -705,7 +716,7 @@ impl QueryExecutor {
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
         let rows_vec = paged_table.get_all_rows()?;
 
-        // Filter visible rows
+        // Filter visible rows (v2.6.0: subquery support)
         let visible_rows: Vec<&Row> = rows_vec
             .iter()
             .filter(|row| {
@@ -713,7 +724,7 @@ impl QueryExecutor {
                     return false;
                 }
                 if let Some(ref f) = filter {
-                    ConditionEvaluator::evaluate_with_columns(&table.columns, row, f).unwrap_or(false)
+                    ConditionEvaluator::evaluate_with_context(&table.columns, row, f, db, tx_manager, database_storage, &subquery_ctx).unwrap_or(false)
                 } else {
                     true
                 }
@@ -754,6 +765,11 @@ impl QueryExecutor {
                     // CASE expressions are allowed in GROUP BY context (v1.10.0)
                     column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
                 }
+                SelectColumn::Subquery { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Scalar subqueries in SELECT not yet implemented".to_string(),
+                    ));
+                }
             }
         }
 
@@ -781,6 +797,11 @@ impl QueryExecutor {
                         } else {
                             row_values.push("NULL".to_string());
                         }
+                    }
+                    SelectColumn::Subquery { .. } => {
+                        return Err(DatabaseError::ParseError(
+                            "Scalar subqueries in SELECT not yet implemented".to_string(),
+                        ));
                     }
                 }
             }
@@ -847,8 +868,6 @@ impl QueryExecutor {
         tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
-        use crate::parser::JoinType;
-
         // Get the main table
         let main_table = db
             .get_table(&from)

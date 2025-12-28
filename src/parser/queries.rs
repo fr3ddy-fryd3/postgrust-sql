@@ -13,9 +13,65 @@ use nom::{
     IResult,
 };
 
+// Parse a subquery: (SELECT ...)  (v2.6.0)
+fn subquery(input: &str) -> IResult<&str, Box<Statement>> {
+    map(
+        delimited(
+            ws(char('(')),
+            select,
+            ws(char(')')),
+        ),
+        Box::new,
+    )(input)
+}
+
 // Parse a simple condition (column = value, etc.)
 fn condition_term(input: &str) -> IResult<&str, Condition> {
     alt((
+        // EXISTS (SELECT ...) (v2.6.0)
+        map(
+            preceded(ws(tag_no_case("EXISTS")), subquery),
+            Condition::Exists,
+        ),
+        // NOT EXISTS (SELECT ...) (v2.6.0)
+        map(
+            preceded(
+                tuple((ws(tag_no_case("NOT")), ws(tag_no_case("EXISTS")))),
+                subquery,
+            ),
+            |stmt| Condition::NotExists(stmt),
+        ),
+        // col IN (SELECT ...) or col NOT IN (SELECT ...) (v2.6.0)
+        map(
+            tuple((
+                ws(identifier),
+                opt(ws(tag_no_case("NOT"))),
+                ws(tag_no_case("IN")),
+                subquery,
+            )),
+            |(col, not, _, stmt)| {
+                if not.is_some() {
+                    Condition::NotInSubquery(col, stmt)
+                } else {
+                    Condition::InSubquery(col, stmt)
+                }
+            },
+        ),
+        // col = (SELECT ...) (v2.6.0)
+        map(
+            tuple((ws(identifier), ws(char('=')), subquery)),
+            |(col, _, stmt)| Condition::EqualsSubquery(col, stmt),
+        ),
+        // col > (SELECT ...) (v2.6.0)
+        map(
+            tuple((ws(identifier), ws(char('>')), subquery)),
+            |(col, _, stmt)| Condition::GreaterThanSubquery(col, stmt),
+        ),
+        // col < (SELECT ...) (v2.6.0)
+        map(
+            tuple((ws(identifier), ws(char('<')), subquery)),
+            |(col, _, stmt)| Condition::LessThanSubquery(col, stmt),
+        ),
         // IS NULL / IS NOT NULL (v1.8.0)
         map(
             tuple((
@@ -205,6 +261,17 @@ fn select_column(input: &str) -> IResult<&str, SelectColumn> {
     alt((
         map(case_expression, SelectColumn::Case),
         map(aggregate_function, SelectColumn::Aggregate),
+        // Scalar subquery: (SELECT ...) or (SELECT ...) AS alias (v2.6.0)
+        map(
+            tuple((
+                subquery,
+                opt(preceded(ws(tag_no_case("AS")), ws(identifier))),
+            )),
+            |(query, alias)| SelectColumn::Subquery {
+                query,
+                alias,
+            },
+        ),
         map(
             alt((map(ws(char('*')), |_| "*".to_string()), identifier)),
             SelectColumn::Regular,
@@ -396,5 +463,128 @@ pub fn select(input: &str) -> IResult<&str, Statement> {
             ))
         }
         _ => Ok((input, left)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_exists_subquery() {
+        let sql = "EXISTS (SELECT * FROM users)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::Exists(_)));
+    }
+
+    #[test]
+    fn test_parse_not_exists_subquery() {
+        let sql = "NOT EXISTS (SELECT * FROM orders)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::NotExists(_)));
+    }
+
+    #[test]
+    fn test_parse_in_subquery() {
+        let sql = "user_id IN (SELECT id FROM users)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::InSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_not_in_subquery() {
+        let sql = "product_id NOT IN (SELECT id FROM products WHERE active = 'true')";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::NotInSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_scalar_subquery_equals() {
+        let sql = "price = (SELECT MAX(price) FROM products)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::EqualsSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_scalar_subquery_greater_than() {
+        let sql = "age > (SELECT AVG(age) FROM users)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::GreaterThanSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_scalar_subquery_in_select() {
+        let sql = "SELECT name, (SELECT COUNT(*) FROM orders) AS order_count FROM users";
+        let result = select(sql);
+        assert!(result.is_ok());
+        let (_, stmt) = result.unwrap();
+        if let Statement::Select { columns, .. } = stmt {
+            assert_eq!(columns.len(), 2);
+            assert!(matches!(columns[1], SelectColumn::Subquery { .. }));
+        } else {
+            panic!("Expected Select statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_subquery_condition() {
+        let sql = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = 'active')";
+        let result = select(sql);
+        assert!(result.is_ok());
+        let (_, stmt) = result.unwrap();
+        if let Statement::Select { filter, .. } = stmt {
+            assert!(filter.is_some());
+            assert!(matches!(filter.unwrap(), Condition::InSubquery(_, _)));
+        } else {
+            panic!("Expected Select statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_exists_in_select() {
+        let sql = "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders)";
+        let result = select(sql);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let (remaining, stmt) = result.unwrap();
+        assert!(remaining.trim().is_empty(), "Remaining input: {}", remaining);
+        if let Statement::Select { filter, .. } = stmt {
+            assert!(filter.is_some());
+            assert!(matches!(filter.unwrap(), Condition::Exists(_)));
+        } else {
+            panic!("Expected Select statement");
+        }
+    }
+
+    #[test]
+    fn test_where_clause_with_exists() {
+        let sql = "WHERE EXISTS (SELECT 1 FROM orders)";
+        let result = where_clause(sql);
+        assert!(result.is_ok(), "Failed to parse WHERE: {:?}", result.err());
+        let (remaining, filter) = result.unwrap();
+        assert!(remaining.trim().is_empty(), "Remaining after WHERE: {}", remaining);
+        assert!(filter.is_some());
+        assert!(matches!(filter.unwrap(), Condition::Exists(_)));
+    }
+
+    #[test]
+    fn test_condition_with_exists() {
+        let sql = "EXISTS (SELECT 1 FROM orders)";
+        let result = condition(sql);
+        assert!(result.is_ok(), "Failed to parse condition: {:?}", result.err());
+        let (remaining, cond) = result.unwrap();
+        assert!(remaining.trim().is_empty(), "Remaining after condition: {}", remaining);
+        assert!(matches!(cond, Condition::Exists(_)));
     }
 }

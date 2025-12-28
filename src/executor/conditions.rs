@@ -2,8 +2,13 @@
 ///
 /// This module handles evaluation of SQL WHERE conditions against rows.
 /// Supports: =, !=, >, <, >=, <=, BETWEEN, LIKE, IN, IS NULL, AND, OR operators (v1.8.0).
+/// v2.6.0: Added subquery support (IN, EXISTS, scalar subqueries).
 use crate::types::{Column, Row, Value, DatabaseError, Table};
 use crate::parser::Condition;
+use crate::core::Database;
+use crate::storage::DatabaseStorage;
+use crate::transaction::GlobalTransactionManager;
+use crate::executor::subquery::{SubqueryExecutor, SubqueryContext};
 
 pub struct ConditionEvaluator;
 
@@ -87,6 +92,175 @@ impl ConditionEvaluator {
                 let right_result = Self::evaluate_with_columns(columns, row, right)?;
                 Ok(left_result || right_result)
             }
+            // v2.6.0: Subquery conditions (stub implementations)
+            Condition::InSubquery(_, _) => {
+                Err(DatabaseError::ParseError("IN subquery not yet implemented".to_string()))
+            }
+            Condition::NotInSubquery(_, _) => {
+                Err(DatabaseError::ParseError("NOT IN subquery not yet implemented".to_string()))
+            }
+            Condition::Exists(_) => {
+                Err(DatabaseError::ParseError("EXISTS subquery not yet implemented".to_string()))
+            }
+            Condition::NotExists(_) => {
+                Err(DatabaseError::ParseError("NOT EXISTS subquery not yet implemented".to_string()))
+            }
+            Condition::EqualsSubquery(_, _) => {
+                Err(DatabaseError::ParseError("Scalar subquery not yet implemented".to_string()))
+            }
+            Condition::GreaterThanSubquery(_, _) => {
+                Err(DatabaseError::ParseError("Scalar subquery not yet implemented".to_string()))
+            }
+            Condition::LessThanSubquery(_, _) => {
+                Err(DatabaseError::ParseError("Scalar subquery not yet implemented".to_string()))
+            }
+        }
+    }
+
+    /// Evaluate condition with subquery support (v2.6.0)
+    ///
+    /// This function supports evaluating conditions that contain subqueries.
+    /// For non-subquery conditions, it delegates to evaluate_with_columns().
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_with_context(
+        columns: &[Column],
+        row: &Row,
+        condition: &Condition,
+        db: &Database,
+        tx_manager: &GlobalTransactionManager,
+        database_storage: &DatabaseStorage,
+        subquery_context: &SubqueryContext,
+    ) -> Result<bool, DatabaseError> {
+        match condition {
+            // v2.6.0: Subquery conditions
+            Condition::InSubquery(col, stmt) => {
+                let idx = Self::get_column_index(columns, col)?;
+                let row_value_str = row.values[idx].to_string();
+                let subquery_values = SubqueryExecutor::execute_in(
+                    db,
+                    stmt,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                // Compare string representations since QueryResult returns strings
+                let subquery_strings: Vec<String> = subquery_values.iter().map(|v| v.to_string()).collect();
+                Ok(subquery_strings.contains(&row_value_str))
+            }
+            Condition::NotInSubquery(col, stmt) => {
+                let idx = Self::get_column_index(columns, col)?;
+                let row_value_str = row.values[idx].to_string();
+                let subquery_values = SubqueryExecutor::execute_in(
+                    db,
+                    stmt,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                // Compare string representations since QueryResult returns strings
+                let subquery_strings: Vec<String> = subquery_values.iter().map(|v| v.to_string()).collect();
+                Ok(!subquery_strings.contains(&row_value_str))
+            }
+            Condition::Exists(stmt) => {
+                SubqueryExecutor::execute_exists(
+                    db,
+                    stmt,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )
+            }
+            Condition::NotExists(stmt) => {
+                let exists = SubqueryExecutor::execute_exists(
+                    db,
+                    stmt,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                Ok(!exists)
+            }
+            Condition::EqualsSubquery(col, stmt) => {
+                let idx = Self::get_column_index(columns, col)?;
+                let row_value = &row.values[idx];
+                let subquery_value = SubqueryExecutor::execute_scalar(
+                    db,
+                    stmt,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                Ok(row_value == &subquery_value)
+            }
+            Condition::GreaterThanSubquery(col, stmt) => {
+                let idx = Self::get_column_index(columns, col)?;
+                let row_value = &row.values[idx];
+                let subquery_value = SubqueryExecutor::execute_scalar(
+                    db,
+                    stmt,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                Self::compare_greater_than(row_value, &subquery_value)
+            }
+            Condition::LessThanSubquery(col, stmt) => {
+                let idx = Self::get_column_index(columns, col)?;
+                let row_value = &row.values[idx];
+                let subquery_value = SubqueryExecutor::execute_scalar(
+                    db,
+                    stmt,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                Self::compare_less_than(row_value, &subquery_value)
+            }
+            // Recursive handling of AND/OR with subquery support
+            Condition::And(left, right) => {
+                let left_result = Self::evaluate_with_context(
+                    columns,
+                    row,
+                    left,
+                    db,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                let right_result = Self::evaluate_with_context(
+                    columns,
+                    row,
+                    right,
+                    db,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                Ok(left_result && right_result)
+            }
+            Condition::Or(left, right) => {
+                let left_result = Self::evaluate_with_context(
+                    columns,
+                    row,
+                    left,
+                    db,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                let right_result = Self::evaluate_with_context(
+                    columns,
+                    row,
+                    right,
+                    db,
+                    tx_manager,
+                    database_storage,
+                    subquery_context,
+                )?;
+                Ok(left_result || right_result)
+            }
+            // For all other conditions, delegate to evaluate_with_columns
+            _ => Self::evaluate_with_columns(columns, row, condition),
         }
     }
 

@@ -296,6 +296,14 @@ impl ExplainExecutor {
             Condition::Or(left, right) => {
                 format!("({}) OR ({})", Self::format_condition(left), Self::format_condition(right))
             }
+            // v2.6.0: Subquery conditions
+            Condition::InSubquery(col, _) => format!("{col} IN (subquery)"),
+            Condition::NotInSubquery(col, _) => format!("{col} NOT IN (subquery)"),
+            Condition::Exists(_) => "EXISTS (subquery)".to_string(),
+            Condition::NotExists(_) => "NOT EXISTS (subquery)".to_string(),
+            Condition::EqualsSubquery(col, _) => format!("{col} = (subquery)"),
+            Condition::GreaterThanSubquery(col, _) => format!("{col} > (subquery)"),
+            Condition::LessThanSubquery(col, _) => format!("{col} < (subquery)"),
         }
     }
 }

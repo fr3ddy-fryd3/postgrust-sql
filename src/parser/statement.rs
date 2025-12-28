@@ -200,6 +200,25 @@ pub enum Condition {
     IsNotNull(String),                                 // v1.8.0: col IS NOT NULL
     And(Box<Condition>, Box<Condition>),
     Or(Box<Condition>, Box<Condition>),
+
+    // v2.6.0: Subquery conditions
+    InSubquery(String, Box<Statement>),                // col IN (SELECT ...)
+    NotInSubquery(String, Box<Statement>),             // col NOT IN (SELECT ...)
+    Exists(Box<Statement>),                            // EXISTS (SELECT ...)
+    NotExists(Box<Statement>),                         // NOT EXISTS (SELECT ...)
+    EqualsSubquery(String, Box<Statement>),            // col = (SELECT ...)
+    GreaterThanSubquery(String, Box<Statement>),       // col > (SELECT ...)
+    LessThanSubquery(String, Box<Statement>),          // col < (SELECT ...)
+}
+
+/// v2.6.0: Source for FROM clause - table name or subquery
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectSource {
+    Table(String),              // Regular table name
+    Subquery {                  // Derived table (FROM subquery)
+        query: Box<Statement>,
+        alias: String,          // Required for subqueries
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +246,10 @@ pub enum SelectColumn {
     Regular(String),              // Regular column name or *
     Aggregate(AggregateFunction), // Aggregate function
     Case(CaseExpression),         // CASE expression (v1.10.0)
+    Subquery {                    // v2.6.0: Scalar subquery in SELECT list
+        query: Box<Statement>,
+        alias: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
