@@ -19,10 +19,10 @@ run_sql() {
 # Setup: Create 4 tables (users, orders, shipments, payments)
 echo ""
 echo "Setup: Creating test tables..."
-run_sql "DROP TABLE IF EXISTS payments;"
-run_sql "DROP TABLE IF EXISTS shipments;"
-run_sql "DROP TABLE IF EXISTS orders;"
-run_sql "DROP TABLE IF EXISTS users;"
+run_sql "DROP TABLE payments;" 2>/dev/null || true
+run_sql "DROP TABLE shipments;" 2>/dev/null || true
+run_sql "DROP TABLE orders;" 2>/dev/null || true
+run_sql "DROP TABLE users;" 2>/dev/null || true
 
 run_sql "CREATE TABLE users (
     id INTEGER,
@@ -171,10 +171,10 @@ fi
 # Cleanup
 echo ""
 echo "Cleaning up test tables..."
-run_sql "DROP TABLE IF EXISTS payments;"
-run_sql "DROP TABLE IF EXISTS shipments;"
-run_sql "DROP TABLE IF EXISTS orders;"
-run_sql "DROP TABLE IF EXISTS users;"
+run_sql "DROP TABLE payments;" 2>/dev/null || true
+run_sql "DROP TABLE shipments;" 2>/dev/null || true
+run_sql "DROP TABLE orders;" 2>/dev/null || true
+run_sql "DROP TABLE users;" 2>/dev/null || true
 
 echo ""
 echo "=== All Multi-JOIN tests PASSED! ✓ ==="

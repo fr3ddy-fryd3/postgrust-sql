@@ -27,6 +27,7 @@ pub mod explain;  // v1.8.0
 pub mod system_catalogs;  // v2.0.0
 pub mod system_functions;  // v2.0.0
 pub mod subquery;  // v2.6.0
+pub mod window;  // v2.6.0
 
 // Re-export main executor
 pub use dispatcher_executor::{QueryExecutor, QueryResult};

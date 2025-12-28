@@ -25,10 +25,24 @@ cargo run --release
 cargo run --example cli
 ```
 
-## Возможности (v2.4.0)
+## Возможности (v2.6.0)
 
 ### Основное
 - **SQL запросы**: CREATE/DROP TABLE/VIEW, INSERT, SELECT, UPDATE, DELETE, SHOW TABLES
+- **Window Functions** (v2.6.0): Аналитические функции с PARTITION BY и ORDER BY
+  - ROW_NUMBER() - последовательная нумерация
+  - RANK() / DENSE_RANK() - ранжирование с/без пропусков
+  - LAG() / LEAD() - доступ к предыдущим/следующим строкам
+  - Полная поддержка PARTITION BY и ORDER BY
+- **Subqueries** (v2.6.0): Подзапросы во всех контекстах
+  - IN / NOT IN подзапросы в WHERE
+  - EXISTS / NOT EXISTS проверки существования
+  - Scalar subqueries в WHERE и SELECT
+  - Вложенные подзапросы любой глубины
+- **Multi-JOIN** (v2.6.0): Множественные JOIN в одном запросе
+  - Последовательная обработка нескольких таблиц
+  - Смешанные типы JOIN (INNER/LEFT/RIGHT)
+  - Агрегатные функции с JOIN (COUNT, SUM, AVG, MIN, MAX)
 - **Extended Query Protocol** (v2.4.0): Prepared statements с параметрами ($1, $2, $3...)
   - PARSE/BIND/DESCRIBE/EXECUTE/CLOSE/SYNC протокол
   - Server-side statement caching для производительности
@@ -60,8 +74,10 @@ cargo run --example cli
 
 ### SQL Возможности
 - **23 типа данных**: SMALLINT, INTEGER, BIGINT, SERIAL, BIGSERIAL, REAL, NUMERIC(p,s), TEXT, VARCHAR(n), CHAR(n), BOOLEAN, DATE, TIMESTAMP, TIMESTAMPTZ, UUID, JSON, JSONB, BYTEA, ENUM, и др.
-- **JOIN**: INNER, LEFT, RIGHT
-- **Агрегаты**: COUNT, SUM, AVG, MIN, MAX
+- **JOIN**: INNER, LEFT, RIGHT (множественные JOIN в одном запросе)
+- **Агрегаты**: COUNT, SUM, AVG, MIN, MAX (работают с JOIN)
+- **Window Functions**: ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD
+- **Subqueries**: IN, NOT IN, EXISTS, NOT EXISTS, scalar subqueries
 - **GROUP BY**
 - **ORDER BY** с ASC/DESC
 - **LIMIT** и **OFFSET**
@@ -78,9 +94,9 @@ cargo run --example cli
 - **Составные индексы**: поддержка multi-column индексов
 - **Foreign Keys**: поддержка внешних ключей
 
-## Архитектура (v2.4.0)
+## Архитектура (v2.6.0)
 
-**Модульная структура** (~18200 строк кода, добавлены Extended Query + COPY в v2.4.0):
+**Модульная структура** (~19500 строк кода, добавлены Window Functions + Subqueries + Multi-JOIN в v2.6.0):
 
 ```
 postgrustsql/
@@ -94,10 +110,12 @@ postgrustsql/
 │   ├── parser/             # SQL парсер (nom) - ddl.rs, dml.rs, queries.rs
 │   ├── executor/           # Модульный исполнитель
 │   │   ├── storage_adapter.rs  # RowStorage trait (Vec<Row> | PagedTable)
-│   │   ├── conditions.rs       # WHERE evaluation (все операторы)
+│   │   ├── conditions.rs       # WHERE evaluation (+ subqueries v2.6.0)
 │   │   ├── dml.rs             # INSERT/UPDATE/DELETE
 │   │   ├── ddl.rs             # CREATE/DROP/ALTER TABLE
-│   │   ├── queries.rs         # SELECT (с query planner)
+│   │   ├── queries.rs         # SELECT (+ multi-JOIN, aggregates fix v2.6.0)
+│   │   ├── subquery.rs        # (v2.6.0) Подзапросы IN/EXISTS/scalar
+│   │   ├── window.rs          # (v2.6.0) Window functions
 │   │   ├── vacuum.rs          # VACUUM cleanup
 │   │   ├── index.rs           # CREATE/DROP INDEX
 │   │   ├── explain.rs         # EXPLAIN analyzer

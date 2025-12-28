@@ -246,8 +246,14 @@ pub enum SelectColumn {
     Regular(String),              // Regular column name or *
     Aggregate(AggregateFunction), // Aggregate function
     Case(CaseExpression),         // CASE expression (v1.10.0)
+    Literal(crate::types::Value), // Literal value (v2.6.0: for SELECT 1, SELECT 'text', etc.)
     Subquery {                    // v2.6.0: Scalar subquery in SELECT list
         query: Box<Statement>,
+        alias: Option<String>,
+    },
+    Window {                      // v2.6.0: Window function
+        function: WindowFunction,
+        spec: WindowSpec,
         alias: Option<String>,
     },
 }
@@ -265,6 +271,22 @@ pub enum AggregateFunction {
 pub enum CountTarget {
     All,           // COUNT(*)
     Column(String), // COUNT(column)
+}
+
+// v2.6.0: Window functions
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowFunction {
+    RowNumber,                    // ROW_NUMBER()
+    Rank,                         // RANK()
+    DenseRank,                    // DENSE_RANK()
+    Lag(String, Option<i64>),     // LAG(column, offset)
+    Lead(String, Option<i64>),    // LEAD(column, offset)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowSpec {
+    pub partition_by: Vec<String>,  // PARTITION BY columns
+    pub order_by: Vec<(String, SortOrder)>,  // ORDER BY columns with direction
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -24,6 +24,8 @@ pub use statement::{
     CaseExpression,  // v1.10.0
     WhenClause,      // v1.10.0
     CopyFormat,      // v2.4.0
+    WindowFunction,  // v2.6.0
+    WindowSpec,      // v2.6.0
 };
 
 // Main parser function that combines all parsers

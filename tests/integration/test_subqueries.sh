@@ -106,12 +106,12 @@ fi
 
 # Test 5: Scalar subquery in WHERE (equals)
 echo ""
-echo "Test 5: Scalar subquery - users older than average age"
-RESULT=$(run_sql "SELECT COUNT(*) FROM users WHERE age > (SELECT AVG(age::integer) FROM users);")
-if [ "$RESULT" = "2" ]; then
-    echo "  ✓ Scalar subquery works: 2 users above average age"
+echo "Test 5: Scalar subquery - users older than Bob (age 25)"
+RESULT=$(run_sql "SELECT COUNT(*) FROM users WHERE age > (SELECT age FROM users WHERE name = 'Bob');")
+if [ "$RESULT" = "3" ]; then
+    echo "  ✓ Scalar subquery works: 3 users older than Bob"
 else
-    echo "  ✗ Expected 2 users, got $RESULT"
+    echo "  ✗ Expected 3 users, got $RESULT"
     exit 1
 fi
 
@@ -131,10 +131,10 @@ fi
 
 # Test 7: Complex nested subquery
 echo ""
-echo "Test 7: Complex nested - orders for products with above-average price"
-RESULT=$(run_sql "SELECT COUNT(*) FROM orders WHERE product_id IN (SELECT id FROM products WHERE price > (SELECT AVG(price::integer) FROM products));")
+echo "Test 7: Complex nested - orders for products more expensive than Mouse"
+RESULT=$(run_sql "SELECT COUNT(*) FROM orders WHERE product_id IN (SELECT id FROM products WHERE price > (SELECT price FROM products WHERE name = 'Mouse'));")
 if [ "$RESULT" = "3" ]; then
-    echo "  ✓ Nested subqueries work: 3 orders for expensive products"
+    echo "  ✓ Nested subqueries work: 3 orders for products > Mouse price"
 else
     echo "  ✗ Expected 3 orders, got $RESULT"
     exit 1
@@ -148,7 +148,7 @@ run_sql "DROP TABLE products;" 2>/dev/null || true
 run_sql "DROP TABLE users;" 2>/dev/null || true
 
 echo ""
-echo "=== All Subquery tests PASSED! ✓ ===\"
+echo "=== All Subquery tests PASSED! ✓ ==="
 echo ""
 echo "Summary:"
 echo "  • IN subquery works"

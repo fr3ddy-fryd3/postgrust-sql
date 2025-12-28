@@ -1,27 +1,29 @@
-use super::common::{ws, identifier, value};
+use super::common::{ws, identifier, non_keyword_identifier, value};
 use super::statement::{
     Statement, Condition, SelectColumn, AggregateFunction, CountTarget,
     JoinClause, JoinType, SortOrder, CaseExpression, WhenClause,
+    WindowFunction, WindowSpec,
 };
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while1},
-    character::complete::char,
+    character::complete::{char, digit1},
     combinator::{map, opt, recognize},
     multi::separated_list1,
-    sequence::{delimited, preceded, tuple},
+    sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
 
 // Parse a subquery: (SELECT ...)  (v2.6.0)
+// Using a closure to enable recursive parsing
 fn subquery(input: &str) -> IResult<&str, Box<Statement>> {
-    map(
-        delimited(
-            ws(char('(')),
-            select,
-            ws(char(')')),
-        ),
-        Box::new,
+    delimited(
+        ws(char('(')),
+        |i| {
+            let (i, stmt) = select(i)?;
+            Ok((i, Box::new(stmt)))
+        },
+        ws(char(')')),
     )(input)
 }
 
@@ -44,7 +46,7 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         // col IN (SELECT ...) or col NOT IN (SELECT ...) (v2.6.0)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 opt(ws(tag_no_case("NOT"))),
                 ws(tag_no_case("IN")),
                 subquery,
@@ -59,23 +61,23 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         ),
         // col = (SELECT ...) (v2.6.0)
         map(
-            tuple((ws(identifier), ws(char('=')), subquery)),
+            tuple((ws(non_keyword_identifier), ws(char('=')), subquery)),
             |(col, _, stmt)| Condition::EqualsSubquery(col, stmt),
         ),
         // col > (SELECT ...) (v2.6.0)
         map(
-            tuple((ws(identifier), ws(char('>')), subquery)),
+            tuple((ws(non_keyword_identifier), ws(char('>')), subquery)),
             |(col, _, stmt)| Condition::GreaterThanSubquery(col, stmt),
         ),
         // col < (SELECT ...) (v2.6.0)
         map(
-            tuple((ws(identifier), ws(char('<')), subquery)),
+            tuple((ws(non_keyword_identifier), ws(char('<')), subquery)),
             |(col, _, stmt)| Condition::LessThanSubquery(col, stmt),
         ),
         // IS NULL / IS NOT NULL (v1.8.0)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(tag_no_case("IS")),
                 ws(tag_no_case("NOT")),
                 ws(tag_no_case("NULL")),
@@ -83,13 +85,13 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
             |(col, _, _, _)| Condition::IsNotNull(col),
         ),
         map(
-            tuple((ws(identifier), ws(tag_no_case("IS")), ws(tag_no_case("NULL")))),
+            tuple((ws(non_keyword_identifier), ws(tag_no_case("IS")), ws(tag_no_case("NULL")))),
             |(col, _, _)| Condition::IsNull(col),
         ),
         // BETWEEN (v1.8.0)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(tag_no_case("BETWEEN")),
                 ws(value),
                 ws(tag_no_case("AND")),
@@ -99,7 +101,7 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         ),
         // LIKE (v1.8.0)
         map(
-            tuple((ws(identifier), ws(tag_no_case("LIKE")), ws(value))),
+            tuple((ws(non_keyword_identifier), ws(tag_no_case("LIKE")), ws(value))),
             |(col, _, val)| {
                 if let crate::types::Value::Text(pattern) = val {
                     Condition::Like(col, pattern)
@@ -112,7 +114,7 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         // IN (v1.8.0)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(tag_no_case("IN")),
                 delimited(
                     ws(char('(')),
@@ -125,7 +127,7 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         // Comparison operators (including >=, <=)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(alt((
                     tag(">="),
                     tag("<="),
@@ -169,6 +171,97 @@ pub fn condition(input: &str) -> IResult<&str, Condition> {
         Some(right) => Ok((input, Condition::Or(Box::new(first), Box::new(right)))),
         None => Ok((input, first)),
     }
+}
+
+// Parse window specification: OVER (PARTITION BY ... ORDER BY ...) (v2.6.0)
+fn window_spec(input: &str) -> IResult<&str, WindowSpec> {
+    let (input, _) = ws(tag_no_case("OVER"))(input)?;
+    let (input, _) = ws(char('('))(input)?;
+
+    // Parse optional PARTITION BY
+    let (input, partition_by) = opt(preceded(
+        ws(tag_no_case("PARTITION BY")),
+        separated_list1(ws(char(',')), ws(identifier)),
+    ))(input)?;
+
+    // Parse optional ORDER BY
+    let (input, order_by) = opt(preceded(
+        ws(tag_no_case("ORDER BY")),
+        separated_list1(
+            ws(char(',')),
+            tuple((
+                ws(identifier),
+                opt(alt((
+                    map(ws(tag_no_case("ASC")), |_| SortOrder::Asc),
+                    map(ws(tag_no_case("DESC")), |_| SortOrder::Desc),
+                ))),
+            )),
+        ),
+    ))(input)?;
+
+    let (input, _) = ws(char(')'))(input)?;
+
+    Ok((input, WindowSpec {
+        partition_by: partition_by.unwrap_or_default(),
+        order_by: order_by.unwrap_or_default()
+            .into_iter()
+            .map(|(col, order)| (col, order.unwrap_or(SortOrder::Asc)))
+            .collect(),
+    }))
+}
+
+// Parse window functions: ROW_NUMBER(), RANK(), DENSE_RANK(), LAG(), LEAD() (v2.6.0)
+fn window_function(input: &str) -> IResult<&str, WindowFunction> {
+    alt((
+        map(
+            preceded(ws(tag_no_case("ROW_NUMBER")), tuple((ws(char('(')), ws(char(')'))))),
+            |_| WindowFunction::RowNumber,
+        ),
+        map(
+            preceded(ws(tag_no_case("RANK")), tuple((ws(char('(')), ws(char(')'))))),
+            |_| WindowFunction::Rank,
+        ),
+        map(
+            preceded(ws(tag_no_case("DENSE_RANK")), tuple((ws(char('(')), ws(char(')'))))),
+            |_| WindowFunction::DenseRank,
+        ),
+        // LAG(column) or LAG(column, offset)
+        map(
+            tuple((
+                ws(tag_no_case("LAG")),
+                delimited(
+                    ws(char('(')),
+                    tuple((
+                        ws(identifier),
+                        opt(preceded(ws(char(',')), ws(recognize(pair(opt(char('-')), digit1))))),
+                    )),
+                    ws(char(')')),
+                ),
+            )),
+            |(_, (col, offset))| {
+                let offset_val = offset.and_then(|s| s.parse::<i64>().ok());
+                WindowFunction::Lag(col, offset_val)
+            },
+        ),
+        // LEAD(column) or LEAD(column, offset)
+        map(
+            tuple((
+                ws(tag_no_case("LEAD")),
+                delimited(
+                    ws(char('(')),
+                    tuple((
+                        ws(identifier),
+                        opt(preceded(ws(char(',')), ws(recognize(pair(opt(char('-')), digit1))))),
+                    )),
+                    ws(char(')')),
+                ),
+            )),
+            |(_, (col, offset))| {
+                let offset_val = offset.and_then(|s| s.parse::<i64>().ok());
+                WindowFunction::Lead(col, offset_val)
+            },
+        ),
+    ))(input)
 }
 
 // Parse aggregate functions: COUNT(*), COUNT(col), SUM(col), AVG(col), MIN(col), MAX(col)
@@ -256,11 +349,24 @@ fn case_expression(input: &str) -> IResult<&str, CaseExpression> {
     }))
 }
 
-// Parse select column: either regular column/*, aggregate function, or CASE expression
+// Parse select column: either regular column/*, aggregate function, CASE expression, or literal
 fn select_column(input: &str) -> IResult<&str, SelectColumn> {
     alt((
         map(case_expression, SelectColumn::Case),
         map(aggregate_function, SelectColumn::Aggregate),
+        // Window function: ROW_NUMBER() OVER (...), etc. (v2.6.0)
+        map(
+            tuple((
+                window_function,
+                window_spec,
+                opt(preceded(ws(tag_no_case("AS")), ws(identifier))),
+            )),
+            |(function, spec, alias)| SelectColumn::Window {
+                function,
+                spec,
+                alias,
+            },
+        ),
         // Scalar subquery: (SELECT ...) or (SELECT ...) AS alias (v2.6.0)
         map(
             tuple((
@@ -272,6 +378,8 @@ fn select_column(input: &str) -> IResult<&str, SelectColumn> {
                 alias,
             },
         ),
+        // Literal value: numbers, strings, booleans, NULL (v2.6.0)
+        map(ws(value), SelectColumn::Literal),
         map(
             alt((map(ws(char('*')), |_| "*".to_string()), identifier)),
             SelectColumn::Regular,

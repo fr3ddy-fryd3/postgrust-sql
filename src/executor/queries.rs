@@ -2,7 +2,7 @@
 ///
 /// SELECT, JOIN, aggregate functions, GROUP BY
 use crate::types::{Database, DatabaseError, Row, Table, Value};
-use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression};
+use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression, Statement};
 use crate::transaction::GlobalTransactionManager;
 use super::dispatcher_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
@@ -254,16 +254,23 @@ impl QueryExecutor {
         // Separate regular columns from CASE expressions (v1.10.0)
         let mut regular_col_names: Vec<String> = Vec::new();
         let mut case_expressions: Vec<(usize, &CaseExpression)> = Vec::new();
+        let mut literals: Vec<(usize, &Value)> = Vec::new(); // v2.6.0: Track literal values
+        let mut scalar_subqueries: Vec<(usize, &Box<Statement>, &Option<String>)> = Vec::new(); // v2.6.0: Track subqueries
+        let mut window_functions: Vec<(usize, &crate::parser::WindowFunction, &crate::parser::WindowSpec, &Option<String>)> = Vec::new(); // v2.6.0
 
         for (idx, col) in columns.iter().enumerate() {
             match col {
                 SelectColumn::Regular(name) => regular_col_names.push(name.clone()),
                 SelectColumn::Case(case_expr) => case_expressions.push((idx, case_expr)),
+                SelectColumn::Literal(val) => literals.push((idx, val)), // v2.6.0
+                SelectColumn::Subquery { query, alias } => { // v2.6.0
+                    scalar_subqueries.push((idx, query, alias));
+                }
+                SelectColumn::Window { function, spec, alias } => { // v2.6.0
+                    window_functions.push((idx, function, spec, alias));
+                }
                 SelectColumn::Aggregate(_) => {
                     panic!("Aggregate in regular select should not happen")
-                }
-                SelectColumn::Subquery { .. } => {
-                    return Err(DatabaseError::ParseError("Scalar subqueries in SELECT not yet implemented".to_string()));
                 }
             }
         }
@@ -284,7 +291,7 @@ impl QueryExecutor {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        // Build column names for result (include CASE aliases)
+        // Build column names for result (include CASE aliases and literals)
         let mut column_names: Vec<String> = column_indices
             .iter()
             .map(|&idx| table.columns[idx].name.clone())
@@ -293,6 +300,23 @@ impl QueryExecutor {
         // Add CASE expression column names (use alias or "case")
         for (_, case_expr) in &case_expressions {
             column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
+        }
+
+        // Add literal column names (v2.6.0)
+        for (_, _val) in &literals {
+            column_names.push("?column?".to_string()); // PostgreSQL uses ?column? for unnamed literals
+        }
+
+        // Add scalar subquery column names (v2.6.0)
+        for (_, _, alias) in &scalar_subqueries {
+            let col_name = alias.as_ref().map(|s| s.clone()).unwrap_or_else(|| "?column?".to_string());
+            column_names.push(col_name);
+        }
+
+        // Add window function column names (v2.6.0)
+        for (_, _, _, alias) in &window_functions {
+            let col_name = alias.as_ref().map(|s| s.clone()).unwrap_or_else(|| "?column?".to_string());
+            column_names.push(col_name);
         }
 
         // Get snapshot for READ COMMITTED isolation (v2.1.0)
@@ -347,7 +371,7 @@ impl QueryExecutor {
                         continue;
                     }
 
-                // Build result row: regular columns + CASE expressions
+                // Build result row: regular columns + CASE expressions + literals
                 let mut result_row: Vec<String> = column_indices
                     .iter()
                     .map(|&idx| row.values[idx].to_string())
@@ -357,6 +381,23 @@ impl QueryExecutor {
                 for (_, case_expr) in &case_expressions {
                     let case_value = Self::evaluate_case(case_expr, &table.columns, row)?;
                     result_row.push(case_value.to_string());
+                }
+
+                // Add literal values (v2.6.0)
+                for (_, val) in &literals {
+                    result_row.push(val.to_string());
+                }
+
+                // Execute scalar subqueries (v2.6.0)
+                for (_, query, _) in &scalar_subqueries {
+                    let subquery_value = crate::executor::subquery::SubqueryExecutor::execute_scalar(
+                        db,
+                        query,
+                        tx_manager,
+                        database_storage,
+                        &subquery_ctx,
+                    )?;
+                    result_row.push(subquery_value.to_string());
                 }
 
                 rows_with_data.push((row.clone(), result_row));
@@ -374,7 +415,7 @@ impl QueryExecutor {
                         continue;
                     }
 
-                // Build result row: regular columns + CASE expressions
+                // Build result row: regular columns + CASE expressions + literals
                 let mut result_row: Vec<String> = column_indices
                     .iter()
                     .map(|&idx| row.values[idx].to_string())
@@ -386,7 +427,49 @@ impl QueryExecutor {
                     result_row.push(case_value.to_string());
                 }
 
+                // Add literal values (v2.6.0)
+                for (_, val) in &literals {
+                    result_row.push(val.to_string());
+                }
+
+                // Execute scalar subqueries (v2.6.0)
+                for (_, query, _) in &scalar_subqueries {
+                    let subquery_value = crate::executor::subquery::SubqueryExecutor::execute_scalar(
+                        db,
+                        query,
+                        tx_manager,
+                        database_storage,
+                        &subquery_ctx,
+                    )?;
+                    result_row.push(subquery_value.to_string());
+                }
+
                 rows_with_data.push((row.clone(), result_row));
+            }
+        }
+
+        // Execute window functions (v2.6.0)
+        // Window functions need ALL rows to compute results
+        if !window_functions.is_empty() {
+            let all_rows: Vec<&Row> = rows_with_data.iter().map(|(r, _)| r).collect();
+
+            // Collect all window function results first
+            let mut all_window_results = Vec::new();
+            for (_, function, spec, _) in &window_functions {
+                let window_results = crate::executor::window::WindowFunctionExecutor::execute(
+                    function,
+                    spec,
+                    &all_rows,
+                    &table.columns,
+                )?;
+                all_window_results.push(window_results);
+            }
+
+            // Append all window results to each row's result_row
+            for (row_idx, (_, result_row)) in rows_with_data.iter_mut().enumerate() {
+                for window_results in &all_window_results {
+                    result_row.push(window_results[row_idx].clone());
+                }
             }
         }
 
@@ -507,6 +590,11 @@ impl QueryExecutor {
                     result_row.push(value);
                     column_names.push(name);
                 }
+                SelectColumn::Literal(val) => {
+                    // Literals are allowed with aggregates (v2.6.0)
+                    result_row.push(val.to_string());
+                    column_names.push("?column?".to_string());
+                }
                 SelectColumn::Regular(_) => {
                     return Err(DatabaseError::ParseError(
                         "Cannot mix aggregates with regular columns without GROUP BY".to_string(),
@@ -520,6 +608,11 @@ impl QueryExecutor {
                 SelectColumn::Subquery { .. } => {
                     return Err(DatabaseError::ParseError(
                         "Scalar subqueries in SELECT not yet implemented".to_string(),
+                    ));
+                }
+                SelectColumn::Window { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Window functions not supported with aggregates/GROUP BY".to_string(),
                     ));
                 }
             }
@@ -673,6 +766,156 @@ impl QueryExecutor {
         }
     }
 
+    /// Compute aggregate function from joined rows (v2.6.0 fix)
+    /// Works with Vec<Vec<String>> instead of &[&Row]
+    fn compute_aggregate_from_joined_rows(
+        agg_func: &AggregateFunction,
+        rows: &[Vec<String>],
+        column_names: &[String],
+    ) -> Result<(String, String), DatabaseError> {
+        match agg_func {
+            AggregateFunction::Count(target) => {
+                let count = match target {
+                    CountTarget::All => rows.len(),
+                    CountTarget::Column(col_name) => {
+                        // Find column index in combined columns
+                        let col_idx = column_names
+                            .iter()
+                            .position(|name| name == col_name)
+                            .ok_or_else(|| {
+                                DatabaseError::ParseError(format!("Unknown column: {col_name}"))
+                            })?;
+
+                        // Count non-NULL values
+                        rows.iter()
+                            .filter(|row| {
+                                row.get(col_idx)
+                                    .map(|val| val != "NULL" && !val.is_empty())
+                                    .unwrap_or(false)
+                            })
+                            .count()
+                    }
+                };
+                Ok((count.to_string(), "count".to_string()))
+            }
+            AggregateFunction::Sum(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut sum_int: Option<i64> = None;
+                let mut sum_real: Option<f64> = None;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        // Try to parse as integer first, then float
+                        if let Ok(i) = val_str.parse::<i64>() {
+                            sum_int = Some(sum_int.unwrap_or(0) + i);
+                        } else if let Ok(f) = val_str.parse::<f64>() {
+                            sum_real = Some(sum_real.unwrap_or(0.0) + f);
+                        }
+                    }
+                }
+
+                let value = if let Some(r) = sum_real {
+                    r.to_string()
+                } else if let Some(i) = sum_int {
+                    i.to_string()
+                } else {
+                    "0".to_string()
+                };
+
+                Ok((value, format!("sum({col_name})")))
+            }
+            AggregateFunction::Avg(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut sum = 0.0;
+                let mut count = 0;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        if let Ok(f) = val_str.parse::<f64>() {
+                            sum += f;
+                            count += 1;
+                        }
+                    }
+                }
+
+                let avg = if count > 0 { sum / f64::from(count) } else { 0.0 };
+                Ok((avg.to_string(), format!("avg({col_name})")))
+            }
+            AggregateFunction::Min(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut min_val: Option<String> = None;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        if min_val.is_none() {
+                            min_val = Some(val_str.clone());
+                        } else if let Some(ref current_min) = min_val {
+                            // String comparison (works for text, can be extended for numbers)
+                            if val_str < current_min {
+                                min_val = Some(val_str.clone());
+                            }
+                        }
+                    }
+                }
+
+                let value = min_val.unwrap_or_else(|| "NULL".to_string());
+                Ok((value, format!("min({col_name})")))
+            }
+            AggregateFunction::Max(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut max_val: Option<String> = None;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        if max_val.is_none() {
+                            max_val = Some(val_str.clone());
+                        } else if let Some(ref current_max) = max_val {
+                            // String comparison (works for text, can be extended for numbers)
+                            if val_str > current_max {
+                                max_val = Some(val_str.clone());
+                            }
+                        }
+                    }
+                }
+
+                let value = max_val.unwrap_or_else(|| "NULL".to_string());
+                Ok((value, format!("max({col_name})")))
+            }
+        }
+    }
+
     /// SELECT with GROUP BY
     ///
     /// Groups rows by specified columns and computes aggregates per group
@@ -761,6 +1004,10 @@ impl QueryExecutor {
                     let (_, name) = Self::compute_aggregate(agg_func, table, &[])?;
                     column_names.push(name);
                 }
+                SelectColumn::Literal(_) => {
+                    // Literals are allowed with GROUP BY (v2.6.0)
+                    column_names.push("?column?".to_string());
+                }
                 SelectColumn::Case(case_expr) => {
                     // CASE expressions are allowed in GROUP BY context (v1.10.0)
                     column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
@@ -768,6 +1015,11 @@ impl QueryExecutor {
                 SelectColumn::Subquery { .. } => {
                     return Err(DatabaseError::ParseError(
                         "Scalar subqueries in SELECT not yet implemented".to_string(),
+                    ));
+                }
+                SelectColumn::Window { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Window functions not supported with aggregates/GROUP BY".to_string(),
                     ));
                 }
             }
@@ -788,6 +1040,10 @@ impl QueryExecutor {
                         let (value, _) = Self::compute_aggregate(agg_func, table, &group_rows)?;
                         row_values.push(value);
                     }
+                    SelectColumn::Literal(val) => {
+                        // Literals are constant, same for every group (v2.6.0)
+                        row_values.push(val.to_string());
+                    }
                     SelectColumn::Case(case_expr) => {
                         // Evaluate CASE expression on first row of group (v1.10.0)
                         // In GROUP BY context, CASE should be deterministic per group
@@ -801,6 +1057,11 @@ impl QueryExecutor {
                     SelectColumn::Subquery { .. } => {
                         return Err(DatabaseError::ParseError(
                             "Scalar subqueries in SELECT not yet implemented".to_string(),
+                        ));
+                    }
+                    SelectColumn::Window { .. } => {
+                        return Err(DatabaseError::ParseError(
+                            "Window functions not supported with aggregates/GROUP BY".to_string(),
                         ));
                     }
                 }
@@ -858,7 +1119,7 @@ impl QueryExecutor {
     fn select_with_join(
         db: &Database,
         distinct: bool,
-        _columns: Vec<SelectColumn>,
+        columns: Vec<SelectColumn>,
         from: String,
         joins: Vec<crate::parser::JoinClause>,
         _filter: Option<Condition>,
@@ -892,6 +1153,42 @@ impl QueryExecutor {
             use std::collections::HashSet;
             let mut seen: HashSet<Vec<String>> = HashSet::new();
             result_rows.retain(|row| seen.insert(row.clone()));
+        }
+
+        // Check if there are aggregate functions
+        let has_aggregates = columns
+            .iter()
+            .any(|col| matches!(col, SelectColumn::Aggregate(_)));
+
+        if has_aggregates {
+            // Compute aggregates from joined rows (v2.6.0 fix)
+            let mut agg_result_row = Vec::new();
+            let mut agg_column_names = Vec::new();
+
+            for col in columns {
+                match col {
+                    SelectColumn::Aggregate(agg_func) => {
+                        let (value, name) = Self::compute_aggregate_from_joined_rows(
+                            &agg_func,
+                            &result_rows,
+                            &combined_columns,
+                        )?;
+                        agg_result_row.push(value);
+                        agg_column_names.push(name);
+                    }
+                    SelectColumn::Literal(val) => {
+                        agg_result_row.push(val.to_string());
+                        agg_column_names.push("?column?".to_string());
+                    }
+                    _ => {
+                        return Err(DatabaseError::ParseError(
+                            "Cannot mix aggregates with other columns without GROUP BY in JOIN".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            return Ok(QueryResult::Rows(vec![agg_result_row], agg_column_names));
         }
 
         // Apply OFFSET + LIMIT if specified

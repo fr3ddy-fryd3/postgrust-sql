@@ -15,14 +15,17 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release --bin postgrustsql     # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 202 tests (all passing ✅ v2.5.0)
+cargo test                                 # 213 tests (all passing ✅ v2.6.0)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
 ./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
 ./tests/integration/test_extended_operators.sh  # Test extended WHERE operators
 ./tests/integration/test_explain.sh        # Test EXPLAIN command
 ./tests/integration/test_sql_expressions.sh # Test CASE & set operations (v1.10.0)
-./tests/integration/test_copy_binary.sh # Test COPY Binary Format (v2.5.0)
+./tests/integration/test_copy_binary.sh    # Test COPY Binary Format (v2.5.0)
+./tests/integration/test_subqueries.sh     # Test subqueries (v2.6.0)
+./tests/integration/test_multi_join.sh     # Test multi-JOIN (v2.6.0)
+./tests/integration/test_window_functions.sh # Test window functions (v2.6.0)
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 
 # Backup & Restore (v2.2.0)
@@ -34,6 +37,9 @@ cargo build --release --bin pgr_dump --bin pgr_restore
 
 **Features:**
 - PostgreSQL-compatible wire protocol (port 5432)
+- **Window Functions (v2.6.0)** - ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD with PARTITION BY/ORDER BY 📊
+- **Subqueries (v2.6.0)** - IN/NOT IN, EXISTS/NOT EXISTS, scalar subqueries, nested queries 🔍
+- **Multi-JOIN (v2.6.0)** - Multiple JOINs in single query + aggregates with JOIN ⚡
 - **Extended Query Protocol (v2.4.0)** - Prepared statements with PARSE/BIND/EXECUTE 📡
 - **COPY Protocol (v2.4.0)** - Bulk data import/export (COPY FROM STDIN / TO STDOUT) 📋
 - 23 data types (~45% PostgreSQL compatibility)
@@ -50,7 +56,7 @@ cargo build --release --bin pgr_dump --bin pgr_restore
 - Composite (multi-column) indexes with AND query optimization (v1.9.0)
 - CASE expressions, UNION/INTERSECT/EXCEPT set operations (v1.10.0)
 
-## Architecture (v1.9.0)
+## Architecture (v2.6.0)
 
 ### Модульная структура:
 ```
@@ -59,14 +65,16 @@ src/
 ├── parser/        # SQL parser (nom) - ddl.rs, dml.rs, queries.rs
 ├── executor/      # Modular executor (v1.5.0) ✨
 │   ├── storage_adapter.rs  # RowStorage trait (Vec<Row> | PagedTable)
-│   ├── conditions.rs       # WHERE evaluation (=, !=, >, <, >=, <=, BETWEEN, LIKE, IN, IS NULL)
+│   ├── conditions.rs       # WHERE evaluation (+ subqueries v2.6.0)
 │   ├── dml.rs             # INSERT/UPDATE/DELETE (with index maintenance)
 │   ├── ddl.rs             # CREATE/DROP/ALTER TABLE
-│   ├── queries.rs         # SELECT (with query planner for indexes)
+│   ├── queries.rs         # SELECT (+ multi-JOIN, aggregates fix v2.6.0)
+│   ├── subquery.rs        # (v2.6.0) Subquery execution (IN/EXISTS/scalar)
+│   ├── window.rs          # (v2.6.0) Window functions executor
 │   ├── vacuum.rs          # VACUUM cleanup (v1.5.1)
 │   ├── index.rs           # CREATE/DROP INDEX (v1.7.0)
 │   ├── explain.rs         # EXPLAIN query analyzer (v1.8.0)
-│   └── legacy.rs          # Minimal dispatcher (146 lines)
+│   └── dispatcher.rs      # Query dispatcher
 ├── index/         # Index implementations (v1.7.0, v1.9.0: composite support)
 │   ├── btree.rs           # BTreeIndex O(log n) - single & composite
 │   ├── hash.rs            # HashIndex O(1) - single & composite
@@ -75,7 +83,7 @@ src/
 ├── storage/       # Binary save/load, WAL, Page-based (v1.5.0)
 └── network/       # TCP server, PostgreSQL protocol
 
-Total: ~2,400 lines of modular code (vs 3009 lines monolith before refactoring)
+Total: ~19,500 lines of code (v2.6.0)
 ```
 
 ### Storage Architecture (v1.5.0):
@@ -188,6 +196,43 @@ ALTER TABLE orders OWNER TO bob;                  -- Change table owner
 GRANT SELECT ON TABLE orders TO alice;            -- Grant table privilege
 GRANT INSERT, UPDATE ON TABLE orders TO readonly; -- Grant multiple privileges
 REVOKE SELECT ON TABLE orders FROM alice;         -- Revoke table privilege
+
+-- Subqueries (v2.6.0)
+SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);  -- IN subquery
+SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE status = 'cancelled');
+SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);
+SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);
+SELECT * FROM users WHERE age > (SELECT AVG(age) FROM users);  -- Scalar subquery
+SELECT name, (SELECT COUNT(*) FROM orders WHERE user_id = users.id) AS order_count FROM users;
+-- Nested subqueries
+SELECT * FROM orders WHERE product_id IN (
+    SELECT id FROM products WHERE price > (SELECT AVG(price) FROM products)
+);
+
+-- Multi-JOIN (v2.6.0)
+SELECT u.name, o.id, s.status, p.amount
+FROM users u
+JOIN orders o ON u.id = o.user_id
+JOIN shipments s ON o.id = s.order_id
+JOIN payments p ON s.id = p.shipment_id;
+
+SELECT COUNT(*) FROM users JOIN orders ON users.id = orders.user_id;  -- Aggregates with JOIN
+SELECT u.name, COUNT(o.id) FROM users u LEFT JOIN orders o ON u.id = o.user_id GROUP BY u.name;
+
+-- Window Functions (v2.6.0)
+SELECT name, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS row_num FROM sales;
+SELECT name, amount, RANK() OVER (ORDER BY amount DESC) AS rank FROM sales;
+SELECT name, amount, DENSE_RANK() OVER (PARTITION BY dept ORDER BY amount) AS dept_rank FROM sales;
+SELECT name, amount, LAG(amount, 1) OVER (ORDER BY id) AS prev_amount FROM sales;
+SELECT name, amount, LEAD(amount, 1) OVER (ORDER BY id) AS next_amount FROM sales;
+-- Combined example
+SELECT
+    dept,
+    name,
+    amount,
+    ROW_NUMBER() OVER (PARTITION BY dept ORDER BY amount DESC) AS dept_row,
+    RANK() OVER (ORDER BY amount DESC) AS overall_rank
+FROM sales;
 ```
 
 ## Data Types (23 total)
@@ -305,10 +350,11 @@ Allowed lints (configured in `src/lib.rs`):
 
 ## Version
 
-**Current**: v2.5.0 (COPY Binary Format) - 202 unit tests passing ✅
+**Current**: v2.6.0 (Window Functions + Subqueries + Multi-JOIN) - 213 unit tests passing ✅
 
 | Version | Key Features |
 |---------|-------------|
+| v2.6.0 | Window Functions, Subqueries, Multi-JOIN, Aggregates with JOIN fix |
 | v2.5.0 | COPY Binary Format (PostgreSQL-compatible, all 23 types) |
 | v2.4.0 | Extended Query Protocol + COPY (prepared statements) |
 | v2.3.0 | RBAC (Role-based access control) |
@@ -316,7 +362,7 @@ Allowed lints (configured in `src/lib.rs`):
 | v2.1.0 | Multi-connection transaction isolation (DML) |
 | v2.0.0 | PostgreSQL wire protocol + System catalogs |
 
-**Next (v2.6.0)**: Subqueries, Window Functions, pg_dump full compatibility
+**Next (v2.7.0)**: Subqueries in FROM clause, CTEs (WITH), Advanced window functions
 
 For detailed version history: See `git log` and `ROADMAP.md`
 

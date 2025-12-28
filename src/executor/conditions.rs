@@ -282,6 +282,19 @@ impl ConditionEvaluator {
             // Cross-type numeric comparisons
             (Value::Integer(x), Value::SmallInt(y)) => Ok(*x > i64::from(*y)),
             (Value::SmallInt(x), Value::Integer(y)) => Ok(i64::from(*x) > *y),
+            // Text to numeric coercion (v2.6.0: for subqueries)
+            (Value::SmallInt(x), Value::Text(y)) => {
+                y.parse::<i16>().map(|y_num| *x > y_num).or(Err(DatabaseError::TypeMismatch))
+            }
+            (Value::Integer(x), Value::Text(y)) => {
+                y.parse::<i64>().map(|y_num| *x > y_num).or(Err(DatabaseError::TypeMismatch))
+            }
+            (Value::Text(x), Value::SmallInt(y)) => {
+                x.parse::<i16>().map(|x_num| x_num > *y).or(Err(DatabaseError::TypeMismatch))
+            }
+            (Value::Text(x), Value::Integer(y)) => {
+                x.parse::<i64>().map(|x_num| x_num > *y).or(Err(DatabaseError::TypeMismatch))
+            }
             _ => Err(DatabaseError::TypeMismatch),
         }
     }
@@ -296,6 +309,19 @@ impl ConditionEvaluator {
             // Cross-type numeric comparisons
             (Value::Integer(x), Value::SmallInt(y)) => Ok(*x < i64::from(*y)),
             (Value::SmallInt(x), Value::Integer(y)) => Ok(i64::from(*x) < *y),
+            // Text to numeric coercion (v2.6.0: for subqueries)
+            (Value::SmallInt(x), Value::Text(y)) => {
+                y.parse::<i16>().map(|y_num| *x < y_num).or(Err(DatabaseError::TypeMismatch))
+            }
+            (Value::Integer(x), Value::Text(y)) => {
+                y.parse::<i64>().map(|y_num| *x < y_num).or(Err(DatabaseError::TypeMismatch))
+            }
+            (Value::Text(x), Value::SmallInt(y)) => {
+                x.parse::<i16>().map(|x_num| x_num < *y).or(Err(DatabaseError::TypeMismatch))
+            }
+            (Value::Text(x), Value::Integer(y)) => {
+                x.parse::<i64>().map(|x_num| x_num < *y).or(Err(DatabaseError::TypeMismatch))
+            }
             _ => Err(DatabaseError::TypeMismatch),
         }
     }

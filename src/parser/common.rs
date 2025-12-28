@@ -29,6 +29,18 @@ pub fn identifier(input: &str) -> IResult<&str, String> {
     )(input)
 }
 
+// Identifier that is not a reserved keyword (v2.6.0)
+// Used in condition parsing to avoid conflicts with EXISTS, NOT, etc.
+pub fn non_keyword_identifier(input: &str) -> IResult<&str, String> {
+    use nom::combinator::verify;
+
+    verify(identifier, |s: &String| {
+        let upper = s.to_uppercase();
+        // Check if it's NOT a keyword that could conflict with condition parsing
+        !matches!(upper.as_str(), "EXISTS" | "NOT" | "AND" | "OR")
+    })(input)
+}
+
 pub fn data_type(input: &str) -> IResult<&str, DataType> {
     alt((
         // Auto-increment types
