@@ -60,13 +60,8 @@ impl Server {
             // Пробуем загрузить существующий
             match storage.load_server_instance() {
                 Ok(mut existing) if !existing.databases.is_empty() => {
-                    println!("✓ Loaded existing server instance");
-                    println!("  - Databases: {}", existing.databases.len());
-                    println!("  - Users: {}", existing.users.len());
-
                     // Проверяем, есть ли суперпользователь
                     if !existing.users.contains_key(superuser) {
-                        println!("  - Creating superuser: {superuser}");
                         existing.users.insert(
                             superuser.to_string(),
                             crate::types::User::new(superuser.to_string(), password, true),
@@ -75,7 +70,6 @@ impl Server {
 
                     // Проверяем, есть ли начальная БД
                     if !existing.databases.contains_key(initial_db) {
-                        println!("  - Creating initial database: {initial_db}");
                         existing.create_database(initial_db, superuser)?;
                     }
 
@@ -83,9 +77,6 @@ impl Server {
                 }
                 _ => {
                     // Создаем новый
-                    println!("✓ Initializing new server instance");
-                    println!("  - Superuser: {superuser}");
-                    println!("  - Initial database: {initial_db}");
                     ServerInstance::initialize(superuser, password, initial_db)
                 }
             }
@@ -107,13 +98,9 @@ impl Server {
         let database_storage = if use_page_storage {
             const BUFFER_POOL_SIZE: usize = 1000; // 1000 pages * 8KB = 8MB cache
             match crate::storage::DatabaseStorage::new(data_dir, BUFFER_POOL_SIZE) {
-                Ok(db_storage) => {
-                    println!("✓ Page-based storage enabled (8MB buffer pool)");
-                    Some(Arc::new(Mutex::new(db_storage)))
-                }
+                Ok(db_storage) => Some(Arc::new(Mutex::new(db_storage))),
                 Err(e) => {
-                    eprintln!("✗ Failed to initialize page storage: {e}");
-                    eprintln!("  Falling back to legacy Vec<Row> storage");
+                    eprintln!("✗ Failed to initialize storage: {e}");
                     None
                 }
             }
@@ -142,8 +129,7 @@ impl Server {
         );
 
         loop {
-            let (socket, addr) = listener.accept().await?;
-            println!("→ New connection from {addr}");
+            let (socket, _addr) = listener.accept().await?;
 
             let instance = Arc::clone(&self.instance);
             let storage = Arc::clone(&self.storage);
@@ -160,7 +146,7 @@ impl Server {
                 )
                 .await
                 {
-                    eprintln!("✗ Error handling client {addr}: {e}");
+                    eprintln!("✗ Error handling client: {e}");
                 }
             });
         }

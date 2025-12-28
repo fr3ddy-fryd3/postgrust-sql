@@ -2,13 +2,36 @@
 ///
 /// SELECT, JOIN, aggregate functions, GROUP BY
 use crate::types::{Database, DatabaseError, Row, Table, Value};
-use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression};
+use crate::parser::{SelectColumn, Condition, AggregateFunction, CountTarget, SortOrder, CaseExpression, Statement};
 use crate::transaction::GlobalTransactionManager;
 use super::dispatcher_executor::QueryResult;
 use super::conditions::ConditionEvaluator;
 use crate::index::Index;
 
 pub struct QueryExecutor;
+
+/// Helper struct for managing intermediate state during multi-JOIN processing (v2.6.0)
+struct IntermediateJoinState {
+    /// Accumulated result rows (each row is Vec<String> of all column values)
+    result_rows: Vec<Vec<String>>,
+
+    /// Accumulated column names in "table.column" format
+    combined_columns: Vec<String>,
+
+    /// Maps "table.column" → index in result row
+    column_map: std::collections::HashMap<String, usize>,
+}
+
+impl IntermediateJoinState {
+    /// Create new empty state
+    fn new() -> Self {
+        Self {
+            result_rows: Vec::new(),
+            combined_columns: Vec::new(),
+            column_map: std::collections::HashMap::new(),
+        }
+    }
+}
 
 impl QueryExecutor {
     /// Evaluate CASE expression for a given row (v1.10.0)
@@ -231,11 +254,21 @@ impl QueryExecutor {
         // Separate regular columns from CASE expressions (v1.10.0)
         let mut regular_col_names: Vec<String> = Vec::new();
         let mut case_expressions: Vec<(usize, &CaseExpression)> = Vec::new();
+        let mut literals: Vec<(usize, &Value)> = Vec::new(); // v2.6.0: Track literal values
+        let mut scalar_subqueries: Vec<(usize, &Box<Statement>, &Option<String>)> = Vec::new(); // v2.6.0: Track subqueries
+        let mut window_functions: Vec<(usize, &crate::parser::WindowFunction, &crate::parser::WindowSpec, &Option<String>)> = Vec::new(); // v2.6.0
 
         for (idx, col) in columns.iter().enumerate() {
             match col {
                 SelectColumn::Regular(name) => regular_col_names.push(name.clone()),
                 SelectColumn::Case(case_expr) => case_expressions.push((idx, case_expr)),
+                SelectColumn::Literal(val) => literals.push((idx, val)), // v2.6.0
+                SelectColumn::Subquery { query, alias } => { // v2.6.0
+                    scalar_subqueries.push((idx, query, alias));
+                }
+                SelectColumn::Window { function, spec, alias } => { // v2.6.0
+                    window_functions.push((idx, function, spec, alias));
+                }
                 SelectColumn::Aggregate(_) => {
                     panic!("Aggregate in regular select should not happen")
                 }
@@ -258,7 +291,7 @@ impl QueryExecutor {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        // Build column names for result (include CASE aliases)
+        // Build column names for result (include CASE aliases and literals)
         let mut column_names: Vec<String> = column_indices
             .iter()
             .map(|&idx| table.columns[idx].name.clone())
@@ -269,9 +302,27 @@ impl QueryExecutor {
             column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
         }
 
+        // Add literal column names (v2.6.0)
+        for (_, _val) in &literals {
+            column_names.push("?column?".to_string()); // PostgreSQL uses ?column? for unnamed literals
+        }
+
+        // Add scalar subquery column names (v2.6.0)
+        for (_, _, alias) in &scalar_subqueries {
+            let col_name = alias.as_ref().map(|s| s.clone()).unwrap_or_else(|| "?column?".to_string());
+            column_names.push(col_name);
+        }
+
+        // Add window function column names (v2.6.0)
+        for (_, _, _, alias) in &window_functions {
+            let col_name = alias.as_ref().map(|s| s.clone()).unwrap_or_else(|| "?column?".to_string());
+            column_names.push(col_name);
+        }
+
         // Get snapshot for READ COMMITTED isolation (v2.1.0)
         // Creates new snapshot before each statement
         let snapshot = tx_manager.get_snapshot();
+        let subquery_ctx = crate::executor::subquery::SubqueryContext::new();  // v2.6.0
 
         // Try to use index if available
         let use_index = Self::find_usable_index(db, &from, &filter);
@@ -314,13 +365,13 @@ impl QueryExecutor {
                     continue;
                 }
 
-                // Index already filtered by equality, but double-check condition
+                // Index already filtered by equality, but double-check condition (v2.6.0: subquery support)
                 if let Some(ref cond) = filter
-                    && !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                    && !ConditionEvaluator::evaluate_with_context(&table.columns, row, cond, db, tx_manager, database_storage, &subquery_ctx)? {
                         continue;
                     }
 
-                // Build result row: regular columns + CASE expressions
+                // Build result row: regular columns + CASE expressions + literals
                 let mut result_row: Vec<String> = column_indices
                     .iter()
                     .map(|&idx| row.values[idx].to_string())
@@ -330,6 +381,23 @@ impl QueryExecutor {
                 for (_, case_expr) in &case_expressions {
                     let case_value = Self::evaluate_case(case_expr, &table.columns, row)?;
                     result_row.push(case_value.to_string());
+                }
+
+                // Add literal values (v2.6.0)
+                for (_, val) in &literals {
+                    result_row.push(val.to_string());
+                }
+
+                // Execute scalar subqueries (v2.6.0)
+                for (_, query, _) in &scalar_subqueries {
+                    let subquery_value = crate::executor::subquery::SubqueryExecutor::execute_scalar(
+                        db,
+                        query,
+                        tx_manager,
+                        database_storage,
+                        &subquery_ctx,
+                    )?;
+                    result_row.push(subquery_value.to_string());
                 }
 
                 rows_with_data.push((row.clone(), result_row));
@@ -343,11 +411,11 @@ impl QueryExecutor {
                 }
 
                 if let Some(ref cond) = filter
-                    && !ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond)? {
+                    && !ConditionEvaluator::evaluate_with_context(&table.columns, row, cond, db, tx_manager, database_storage, &subquery_ctx)? {
                         continue;
                     }
 
-                // Build result row: regular columns + CASE expressions
+                // Build result row: regular columns + CASE expressions + literals
                 let mut result_row: Vec<String> = column_indices
                     .iter()
                     .map(|&idx| row.values[idx].to_string())
@@ -359,7 +427,49 @@ impl QueryExecutor {
                     result_row.push(case_value.to_string());
                 }
 
+                // Add literal values (v2.6.0)
+                for (_, val) in &literals {
+                    result_row.push(val.to_string());
+                }
+
+                // Execute scalar subqueries (v2.6.0)
+                for (_, query, _) in &scalar_subqueries {
+                    let subquery_value = crate::executor::subquery::SubqueryExecutor::execute_scalar(
+                        db,
+                        query,
+                        tx_manager,
+                        database_storage,
+                        &subquery_ctx,
+                    )?;
+                    result_row.push(subquery_value.to_string());
+                }
+
                 rows_with_data.push((row.clone(), result_row));
+            }
+        }
+
+        // Execute window functions (v2.6.0)
+        // Window functions need ALL rows to compute results
+        if !window_functions.is_empty() {
+            let all_rows: Vec<&Row> = rows_with_data.iter().map(|(r, _)| r).collect();
+
+            // Collect all window function results first
+            let mut all_window_results = Vec::new();
+            for (_, function, spec, _) in &window_functions {
+                let window_results = crate::executor::window::WindowFunctionExecutor::execute(
+                    function,
+                    spec,
+                    &all_rows,
+                    &table.columns,
+                )?;
+                all_window_results.push(window_results);
+            }
+
+            // Append all window results to each row's result_row
+            for (row_idx, (_, result_row)) in rows_with_data.iter_mut().enumerate() {
+                for window_results in &all_window_results {
+                    result_row.push(window_results[row_idx].clone());
+                }
             }
         }
 
@@ -444,13 +554,14 @@ impl QueryExecutor {
         // Get snapshot for READ COMMITTED isolation (v2.1.0)
         // Creates new snapshot before each statement
         let snapshot = tx_manager.get_snapshot();
+        let subquery_ctx = crate::executor::subquery::SubqueryContext::new();  // v2.6.0
 
         // Get rows from PagedTable
         let paged_table = database_storage.get_paged_table(&from)
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
         let rows_vec = paged_table.get_all_rows()?;
 
-        // Collect visible rows that match the filter
+        // Collect visible rows that match the filter (v2.6.0: subquery support)
         let visible_rows: Vec<&Row> = rows_vec
             .iter()
             .filter(|row| {
@@ -461,7 +572,7 @@ impl QueryExecutor {
 
                 // Apply filter
                 if let Some(ref cond) = filter {
-                    ConditionEvaluator::evaluate_with_columns(&table.columns, row, cond).unwrap_or(false)
+                    ConditionEvaluator::evaluate_with_context(&table.columns, row, cond, db, tx_manager, database_storage, &subquery_ctx).unwrap_or(false)
                 } else {
                     true
                 }
@@ -479,6 +590,11 @@ impl QueryExecutor {
                     result_row.push(value);
                     column_names.push(name);
                 }
+                SelectColumn::Literal(val) => {
+                    // Literals are allowed with aggregates (v2.6.0)
+                    result_row.push(val.to_string());
+                    column_names.push("?column?".to_string());
+                }
                 SelectColumn::Regular(_) => {
                     return Err(DatabaseError::ParseError(
                         "Cannot mix aggregates with regular columns without GROUP BY".to_string(),
@@ -487,6 +603,16 @@ impl QueryExecutor {
                 SelectColumn::Case(_) => {
                     return Err(DatabaseError::ParseError(
                         "Cannot use CASE expressions with aggregates without GROUP BY".to_string(),
+                    ));
+                }
+                SelectColumn::Subquery { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Scalar subqueries in SELECT not yet implemented".to_string(),
+                    ));
+                }
+                SelectColumn::Window { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Window functions not supported with aggregates/GROUP BY".to_string(),
                     ));
                 }
             }
@@ -640,6 +766,156 @@ impl QueryExecutor {
         }
     }
 
+    /// Compute aggregate function from joined rows (v2.6.0 fix)
+    /// Works with Vec<Vec<String>> instead of &[&Row]
+    fn compute_aggregate_from_joined_rows(
+        agg_func: &AggregateFunction,
+        rows: &[Vec<String>],
+        column_names: &[String],
+    ) -> Result<(String, String), DatabaseError> {
+        match agg_func {
+            AggregateFunction::Count(target) => {
+                let count = match target {
+                    CountTarget::All => rows.len(),
+                    CountTarget::Column(col_name) => {
+                        // Find column index in combined columns
+                        let col_idx = column_names
+                            .iter()
+                            .position(|name| name == col_name)
+                            .ok_or_else(|| {
+                                DatabaseError::ParseError(format!("Unknown column: {col_name}"))
+                            })?;
+
+                        // Count non-NULL values
+                        rows.iter()
+                            .filter(|row| {
+                                row.get(col_idx)
+                                    .map(|val| val != "NULL" && !val.is_empty())
+                                    .unwrap_or(false)
+                            })
+                            .count()
+                    }
+                };
+                Ok((count.to_string(), "count".to_string()))
+            }
+            AggregateFunction::Sum(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut sum_int: Option<i64> = None;
+                let mut sum_real: Option<f64> = None;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        // Try to parse as integer first, then float
+                        if let Ok(i) = val_str.parse::<i64>() {
+                            sum_int = Some(sum_int.unwrap_or(0) + i);
+                        } else if let Ok(f) = val_str.parse::<f64>() {
+                            sum_real = Some(sum_real.unwrap_or(0.0) + f);
+                        }
+                    }
+                }
+
+                let value = if let Some(r) = sum_real {
+                    r.to_string()
+                } else if let Some(i) = sum_int {
+                    i.to_string()
+                } else {
+                    "0".to_string()
+                };
+
+                Ok((value, format!("sum({col_name})")))
+            }
+            AggregateFunction::Avg(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut sum = 0.0;
+                let mut count = 0;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        if let Ok(f) = val_str.parse::<f64>() {
+                            sum += f;
+                            count += 1;
+                        }
+                    }
+                }
+
+                let avg = if count > 0 { sum / f64::from(count) } else { 0.0 };
+                Ok((avg.to_string(), format!("avg({col_name})")))
+            }
+            AggregateFunction::Min(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut min_val: Option<String> = None;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        if min_val.is_none() {
+                            min_val = Some(val_str.clone());
+                        } else if let Some(ref current_min) = min_val {
+                            // String comparison (works for text, can be extended for numbers)
+                            if val_str < current_min {
+                                min_val = Some(val_str.clone());
+                            }
+                        }
+                    }
+                }
+
+                let value = min_val.unwrap_or_else(|| "NULL".to_string());
+                Ok((value, format!("min({col_name})")))
+            }
+            AggregateFunction::Max(col_name) => {
+                let col_idx = column_names
+                    .iter()
+                    .position(|name| name == col_name)
+                    .ok_or_else(|| DatabaseError::ParseError(format!("Unknown column: {col_name}")))?;
+
+                let mut max_val: Option<String> = None;
+
+                for row in rows {
+                    if let Some(val_str) = row.get(col_idx) {
+                        if val_str == "NULL" || val_str.is_empty() {
+                            continue;
+                        }
+
+                        if max_val.is_none() {
+                            max_val = Some(val_str.clone());
+                        } else if let Some(ref current_max) = max_val {
+                            // String comparison (works for text, can be extended for numbers)
+                            if val_str > current_max {
+                                max_val = Some(val_str.clone());
+                            }
+                        }
+                    }
+                }
+
+                let value = max_val.unwrap_or_else(|| "NULL".to_string());
+                Ok((value, format!("max({col_name})")))
+            }
+        }
+    }
+
     /// SELECT with GROUP BY
     ///
     /// Groups rows by specified columns and computes aggregates per group
@@ -664,6 +940,7 @@ impl QueryExecutor {
 
         // Get snapshot for READ COMMITTED isolation (v2.1.0)
         let snapshot = tx_manager.get_snapshot();
+        let subquery_ctx = crate::executor::subquery::SubqueryContext::new();  // v2.6.0
 
         // Get indices for GROUP BY columns
         let group_by_indices: Vec<usize> = group_by
@@ -682,7 +959,7 @@ impl QueryExecutor {
             .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
         let rows_vec = paged_table.get_all_rows()?;
 
-        // Filter visible rows
+        // Filter visible rows (v2.6.0: subquery support)
         let visible_rows: Vec<&Row> = rows_vec
             .iter()
             .filter(|row| {
@@ -690,7 +967,7 @@ impl QueryExecutor {
                     return false;
                 }
                 if let Some(ref f) = filter {
-                    ConditionEvaluator::evaluate_with_columns(&table.columns, row, f).unwrap_or(false)
+                    ConditionEvaluator::evaluate_with_context(&table.columns, row, f, db, tx_manager, database_storage, &subquery_ctx).unwrap_or(false)
                 } else {
                     true
                 }
@@ -727,9 +1004,23 @@ impl QueryExecutor {
                     let (_, name) = Self::compute_aggregate(agg_func, table, &[])?;
                     column_names.push(name);
                 }
+                SelectColumn::Literal(_) => {
+                    // Literals are allowed with GROUP BY (v2.6.0)
+                    column_names.push("?column?".to_string());
+                }
                 SelectColumn::Case(case_expr) => {
                     // CASE expressions are allowed in GROUP BY context (v1.10.0)
                     column_names.push(case_expr.alias.clone().unwrap_or_else(|| "case".to_string()));
+                }
+                SelectColumn::Subquery { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Scalar subqueries in SELECT not yet implemented".to_string(),
+                    ));
+                }
+                SelectColumn::Window { .. } => {
+                    return Err(DatabaseError::ParseError(
+                        "Window functions not supported with aggregates/GROUP BY".to_string(),
+                    ));
                 }
             }
         }
@@ -749,6 +1040,10 @@ impl QueryExecutor {
                         let (value, _) = Self::compute_aggregate(agg_func, table, &group_rows)?;
                         row_values.push(value);
                     }
+                    SelectColumn::Literal(val) => {
+                        // Literals are constant, same for every group (v2.6.0)
+                        row_values.push(val.to_string());
+                    }
                     SelectColumn::Case(case_expr) => {
                         // Evaluate CASE expression on first row of group (v1.10.0)
                         // In GROUP BY context, CASE should be deterministic per group
@@ -758,6 +1053,16 @@ impl QueryExecutor {
                         } else {
                             row_values.push("NULL".to_string());
                         }
+                    }
+                    SelectColumn::Subquery { .. } => {
+                        return Err(DatabaseError::ParseError(
+                            "Scalar subqueries in SELECT not yet implemented".to_string(),
+                        ));
+                    }
+                    SelectColumn::Window { .. } => {
+                        return Err(DatabaseError::ParseError(
+                            "Window functions not supported with aggregates/GROUP BY".to_string(),
+                        ));
                     }
                 }
             }
@@ -814,7 +1119,7 @@ impl QueryExecutor {
     fn select_with_join(
         db: &Database,
         distinct: bool,
-        _columns: Vec<SelectColumn>,
+        columns: Vec<SelectColumn>,
         from: String,
         joins: Vec<crate::parser::JoinClause>,
         _filter: Option<Condition>,
@@ -824,8 +1129,6 @@ impl QueryExecutor {
         tx_manager: &GlobalTransactionManager,
         database_storage: &crate::storage::DatabaseStorage,
     ) -> Result<QueryResult, DatabaseError> {
-        use crate::parser::JoinType;
-
         // Get the main table
         let main_table = db
             .get_table(&from)
@@ -833,136 +1136,59 @@ impl QueryExecutor {
 
         let snapshot = tx_manager.get_snapshot();
 
-        // For now, support only one JOIN
-        if joins.len() != 1 {
-            return Err(DatabaseError::ParseError(
-                "Currently only one JOIN is supported".to_string(),
-            ));
+        // v2.6.0: Multi-JOIN support - process JOINs sequentially (left-to-right)
+        let mut state = Self::init_join_state(&from, main_table, &snapshot, database_storage)?;
+
+        // Process each JOIN sequentially
+        for join in &joins {
+            Self::process_single_join(db, join, &mut state, &snapshot, database_storage)?;
         }
 
-        let join = &joins[0];
-
-        // Get the joined table
-        let join_table = db
-            .get_table(&join.table)
-            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
-
-        // Get rows from PagedTable (v2.0.0)
-        let main_paged_table = database_storage.get_paged_table(&from)
-            .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
-        let main_rows = main_paged_table.get_all_rows()?;
-
-        let join_paged_table = database_storage.get_paged_table(&join.table)
-            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
-        let join_rows = join_paged_table.get_all_rows()?;
-
-        // Parse column references (table.column)
-        let parse_col_ref = |ref_str: &str| -> Result<(String, String), DatabaseError> {
-            let parts: Vec<&str> = ref_str.split('.').collect();
-            if parts.len() != 2 {
-                return Err(DatabaseError::ParseError(format!(
-                    "Invalid column reference: {ref_str}"
-                )));
-            }
-            Ok((parts[0].to_string(), parts[1].to_string()))
-        };
-
-        let (left_table_name, left_col_name) = parse_col_ref(&join.on_left)?;
-        let (_right_table_name, right_col_name) = parse_col_ref(&join.on_right)?;
-
-        // Determine which is main and which is joined
-        let (main_join_col, join_join_col) = if left_table_name == from {
-            (left_col_name, right_col_name)
-        } else {
-            (right_col_name, left_col_name)
-        };
-
-        let main_join_idx = main_table
-            .get_column_index(&main_join_col)
-            .ok_or_else(|| DatabaseError::ColumnNotFound(main_join_col.clone()))?;
-
-        let join_join_idx = join_table
-            .get_column_index(&join_join_col)
-            .ok_or_else(|| DatabaseError::ColumnNotFound(join_join_col.clone()))?;
-
-        // Build combined column names
-        let mut combined_columns = Vec::new();
-        for col in &main_table.columns {
-            combined_columns.push(format!("{}.{}", from, col.name));
-        }
-        for col in &join_table.columns {
-            combined_columns.push(format!("{}.{}", join.table, col.name));
-        }
-
-        // Perform the join
-        let mut result_rows = Vec::new();
-
-        for main_row in &main_rows {
-            if !main_row.is_visible_to_snapshot(&snapshot) {
-                continue;
-            }
-
-            let main_join_value = &main_row.values[main_join_idx];
-            let mut matched = false;
-
-            for join_row in &join_rows {
-                if !join_row.is_visible_to_snapshot(&snapshot) {
-                    continue;
-                }
-
-                let join_join_value = &join_row.values[join_join_idx];
-
-                if main_join_value == join_join_value {
-                    matched = true;
-                    // Combine rows
-                    let mut combined_row: Vec<String> = main_row
-                        .values
-                        .iter()
-                        .map(std::string::ToString::to_string)
-                        .collect();
-                    combined_row.extend(join_row.values.iter().map(std::string::ToString::to_string));
-                    result_rows.push(combined_row);
-                }
-            }
-
-            // For LEFT JOIN, include non-matching rows with NULLs
-            if !matched && matches!(join.join_type, JoinType::Left) {
-                let mut combined_row: Vec<String> = main_row
-                    .values
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect();
-                combined_row.extend(vec!["NULL".to_string(); join_table.columns.len()]);
-                result_rows.push(combined_row);
-            }
-        }
-
-        // For RIGHT JOIN, include non-matching rows from join table
-        if matches!(join.join_type, JoinType::Right) {
-            for join_row in &join_rows {
-                if !join_row.is_visible_to_snapshot(&snapshot) {
-                    continue;
-                }
-
-                let join_join_value = &join_row.values[join_join_idx];
-                let matched = main_rows.iter().any(|main_row| {
-                    main_row.is_visible_to_snapshot(&snapshot)
-                        && &main_row.values[main_join_idx] == join_join_value
-                });
-
-                if !matched {
-                    let mut combined_row = vec!["NULL".to_string(); main_table.columns.len()];
-                    combined_row.extend(join_row.values.iter().map(std::string::ToString::to_string));
-                    result_rows.push(combined_row);
-                }
-            }
-        }
+        // Extract result rows from state
+        let mut result_rows = state.result_rows;
+        let combined_columns = state.combined_columns;
 
         // Apply DISTINCT if specified
         if distinct {
             use std::collections::HashSet;
             let mut seen: HashSet<Vec<String>> = HashSet::new();
             result_rows.retain(|row| seen.insert(row.clone()));
+        }
+
+        // Check if there are aggregate functions
+        let has_aggregates = columns
+            .iter()
+            .any(|col| matches!(col, SelectColumn::Aggregate(_)));
+
+        if has_aggregates {
+            // Compute aggregates from joined rows (v2.6.0 fix)
+            let mut agg_result_row = Vec::new();
+            let mut agg_column_names = Vec::new();
+
+            for col in columns {
+                match col {
+                    SelectColumn::Aggregate(agg_func) => {
+                        let (value, name) = Self::compute_aggregate_from_joined_rows(
+                            &agg_func,
+                            &result_rows,
+                            &combined_columns,
+                        )?;
+                        agg_result_row.push(value);
+                        agg_column_names.push(name);
+                    }
+                    SelectColumn::Literal(val) => {
+                        agg_result_row.push(val.to_string());
+                        agg_column_names.push("?column?".to_string());
+                    }
+                    _ => {
+                        return Err(DatabaseError::ParseError(
+                            "Cannot mix aggregates with other columns without GROUP BY in JOIN".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            return Ok(QueryResult::Rows(vec![agg_result_row], agg_column_names));
         }
 
         // Apply OFFSET + LIMIT if specified
@@ -1130,5 +1356,159 @@ impl QueryExecutor {
             }
             _ => Err(DatabaseError::ParseError("Not a query statement".to_string())),
         }
+    }
+
+    // ===== Multi-JOIN Support Methods (v2.6.0) =====
+
+    /// Initialize join state with base table
+    fn init_join_state(
+        table_name: &str,
+        table: &Table,
+        snapshot: &crate::transaction::Snapshot,
+        database_storage: &crate::storage::DatabaseStorage,
+    ) -> Result<IntermediateJoinState, DatabaseError> {
+        let mut state = IntermediateJoinState::new();
+
+        // Load base table rows
+        let paged_table = database_storage
+            .get_paged_table(table_name)
+            .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
+        let rows = paged_table.get_all_rows()?;
+
+        // Convert rows to Vec<Vec<String>> and apply visibility filter
+        for row in rows {
+            if row.is_visible_to_snapshot(snapshot) {
+                let row_values: Vec<String> = row.values.iter().map(ToString::to_string).collect();
+                state.result_rows.push(row_values);
+            }
+        }
+
+        // Build initial column_map with "table_name.column" → index
+        for (idx, col) in table.columns.iter().enumerate() {
+            let qualified_name = format!("{}.{}", table_name, col.name);
+            state.combined_columns.push(qualified_name.clone());
+            state.column_map.insert(qualified_name, idx);
+        }
+
+        Ok(state)
+    }
+
+    /// Process a single JOIN operation on current intermediate state
+    #[allow(clippy::too_many_lines)]
+    fn process_single_join(
+        db: &Database,
+        join: &crate::parser::JoinClause,
+        state: &mut IntermediateJoinState,
+        snapshot: &crate::transaction::Snapshot,
+        database_storage: &crate::storage::DatabaseStorage,
+    ) -> Result<(), DatabaseError> {
+        use crate::parser::JoinType;
+
+        // 1. Load right table
+        let right_table = db
+            .get_table(&join.table)
+            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
+
+        let right_paged_table = database_storage
+            .get_paged_table(&join.table)
+            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
+        let right_rows = right_paged_table.get_all_rows()?;
+
+        // 2. Parse ON clause column references (table.column)
+        let parse_col_ref = |ref_str: &str| -> Result<(String, String), DatabaseError> {
+            let parts: Vec<&str> = ref_str.split('.').collect();
+            if parts.len() != 2 {
+                return Err(DatabaseError::ParseError(format!(
+                    "Invalid column reference: {ref_str}"
+                )));
+            }
+            Ok((parts[0].to_string(), parts[1].to_string()))
+        };
+
+        let (left_table_name, left_col_name) = parse_col_ref(&join.on_left)?;
+        let (_right_table_name, right_col_name) = parse_col_ref(&join.on_right)?;
+
+        // 3. Resolve left column index from column_map (already in intermediate state)
+        let left_col_qualified = format!("{}.{}", left_table_name, left_col_name);
+        let left_idx = *state
+            .column_map
+            .get(&left_col_qualified)
+            .ok_or_else(|| DatabaseError::ColumnNotFound(left_col_qualified.clone()))?;
+
+        // 4. Resolve right column index from right table
+        let right_idx = right_table
+            .get_column_index(&right_col_name)
+            .ok_or_else(|| DatabaseError::ColumnNotFound(right_col_name.clone()))?;
+
+        // 5. Perform nested loop join based on join_type
+        let mut new_result_rows = Vec::new();
+
+        for left_row in &state.result_rows {
+            let left_join_value = &left_row[left_idx];
+            let mut matched = false;
+
+            for right_row in &right_rows {
+                if !right_row.is_visible_to_snapshot(snapshot) {
+                    continue;
+                }
+
+                let right_join_value = right_row.values[right_idx].to_string();
+
+                if left_join_value == &right_join_value {
+                    matched = true;
+                    // Combine rows: left + right
+                    let mut combined_row = left_row.clone();
+                    combined_row.extend(
+                        right_row.values.iter().map(ToString::to_string)
+                    );
+                    new_result_rows.push(combined_row);
+                }
+            }
+
+            // For LEFT JOIN, include non-matching rows with NULLs
+            if !matched && matches!(join.join_type, JoinType::Left) {
+                let mut combined_row = left_row.clone();
+                combined_row.extend(vec!["NULL".to_string(); right_table.columns.len()]);
+                new_result_rows.push(combined_row);
+            }
+        }
+
+        // For RIGHT JOIN, include non-matching rows from right table
+        if matches!(join.join_type, JoinType::Right) {
+            for right_row in &right_rows {
+                if !right_row.is_visible_to_snapshot(snapshot) {
+                    continue;
+                }
+
+                let right_join_value = right_row.values[right_idx].to_string();
+
+                // Check if this right row matched any left row
+                let matched = state.result_rows.iter().any(|left_row| {
+                    left_row[left_idx] == right_join_value
+                });
+
+                if !matched {
+                    // Add NULLs for all left columns + right row values
+                    let mut combined_row = vec!["NULL".to_string(); state.combined_columns.len()];
+                    combined_row.extend(
+                        right_row.values.iter().map(ToString::to_string)
+                    );
+                    new_result_rows.push(combined_row);
+                }
+            }
+        }
+
+        // 6. Update state with new rows
+        state.result_rows = new_result_rows;
+
+        // 7. Extend combined_columns with right table columns
+        let start_idx = state.combined_columns.len();
+        for (offset, col) in right_table.columns.iter().enumerate() {
+            let qualified_name = format!("{}.{}", join.table, col.name);
+            state.combined_columns.push(qualified_name.clone());
+            state.column_map.insert(qualified_name, start_idx + offset);
+        }
+
+        Ok(())
     }
 }

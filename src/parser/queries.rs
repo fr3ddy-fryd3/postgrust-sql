@@ -1,25 +1,83 @@
-use super::common::{ws, identifier, value};
+use super::common::{ws, identifier, non_keyword_identifier, value};
 use super::statement::{
     Statement, Condition, SelectColumn, AggregateFunction, CountTarget,
     JoinClause, JoinType, SortOrder, CaseExpression, WhenClause,
+    WindowFunction, WindowSpec,
 };
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while1},
-    character::complete::char,
+    character::complete::{char, digit1},
     combinator::{map, opt, recognize},
     multi::separated_list1,
-    sequence::{delimited, preceded, tuple},
+    sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
+
+// Parse a subquery: (SELECT ...)  (v2.6.0)
+// Using a closure to enable recursive parsing
+fn subquery(input: &str) -> IResult<&str, Box<Statement>> {
+    delimited(
+        ws(char('(')),
+        |i| {
+            let (i, stmt) = select(i)?;
+            Ok((i, Box::new(stmt)))
+        },
+        ws(char(')')),
+    )(input)
+}
 
 // Parse a simple condition (column = value, etc.)
 fn condition_term(input: &str) -> IResult<&str, Condition> {
     alt((
+        // EXISTS (SELECT ...) (v2.6.0)
+        map(
+            preceded(ws(tag_no_case("EXISTS")), subquery),
+            Condition::Exists,
+        ),
+        // NOT EXISTS (SELECT ...) (v2.6.0)
+        map(
+            preceded(
+                tuple((ws(tag_no_case("NOT")), ws(tag_no_case("EXISTS")))),
+                subquery,
+            ),
+            |stmt| Condition::NotExists(stmt),
+        ),
+        // col IN (SELECT ...) or col NOT IN (SELECT ...) (v2.6.0)
+        map(
+            tuple((
+                ws(non_keyword_identifier),
+                opt(ws(tag_no_case("NOT"))),
+                ws(tag_no_case("IN")),
+                subquery,
+            )),
+            |(col, not, _, stmt)| {
+                if not.is_some() {
+                    Condition::NotInSubquery(col, stmt)
+                } else {
+                    Condition::InSubquery(col, stmt)
+                }
+            },
+        ),
+        // col = (SELECT ...) (v2.6.0)
+        map(
+            tuple((ws(non_keyword_identifier), ws(char('=')), subquery)),
+            |(col, _, stmt)| Condition::EqualsSubquery(col, stmt),
+        ),
+        // col > (SELECT ...) (v2.6.0)
+        map(
+            tuple((ws(non_keyword_identifier), ws(char('>')), subquery)),
+            |(col, _, stmt)| Condition::GreaterThanSubquery(col, stmt),
+        ),
+        // col < (SELECT ...) (v2.6.0)
+        map(
+            tuple((ws(non_keyword_identifier), ws(char('<')), subquery)),
+            |(col, _, stmt)| Condition::LessThanSubquery(col, stmt),
+        ),
         // IS NULL / IS NOT NULL (v1.8.0)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(tag_no_case("IS")),
                 ws(tag_no_case("NOT")),
                 ws(tag_no_case("NULL")),
@@ -27,13 +85,13 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
             |(col, _, _, _)| Condition::IsNotNull(col),
         ),
         map(
-            tuple((ws(identifier), ws(tag_no_case("IS")), ws(tag_no_case("NULL")))),
+            tuple((ws(non_keyword_identifier), ws(tag_no_case("IS")), ws(tag_no_case("NULL")))),
             |(col, _, _)| Condition::IsNull(col),
         ),
         // BETWEEN (v1.8.0)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(tag_no_case("BETWEEN")),
                 ws(value),
                 ws(tag_no_case("AND")),
@@ -43,7 +101,7 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         ),
         // LIKE (v1.8.0)
         map(
-            tuple((ws(identifier), ws(tag_no_case("LIKE")), ws(value))),
+            tuple((ws(non_keyword_identifier), ws(tag_no_case("LIKE")), ws(value))),
             |(col, _, val)| {
                 if let crate::types::Value::Text(pattern) = val {
                     Condition::Like(col, pattern)
@@ -56,7 +114,7 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         // IN (v1.8.0)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(tag_no_case("IN")),
                 delimited(
                     ws(char('(')),
@@ -69,7 +127,7 @@ fn condition_term(input: &str) -> IResult<&str, Condition> {
         // Comparison operators (including >=, <=)
         map(
             tuple((
-                ws(identifier),
+                ws(non_keyword_identifier),
                 ws(alt((
                     tag(">="),
                     tag("<="),
@@ -113,6 +171,97 @@ pub fn condition(input: &str) -> IResult<&str, Condition> {
         Some(right) => Ok((input, Condition::Or(Box::new(first), Box::new(right)))),
         None => Ok((input, first)),
     }
+}
+
+// Parse window specification: OVER (PARTITION BY ... ORDER BY ...) (v2.6.0)
+fn window_spec(input: &str) -> IResult<&str, WindowSpec> {
+    let (input, _) = ws(tag_no_case("OVER"))(input)?;
+    let (input, _) = ws(char('('))(input)?;
+
+    // Parse optional PARTITION BY
+    let (input, partition_by) = opt(preceded(
+        ws(tag_no_case("PARTITION BY")),
+        separated_list1(ws(char(',')), ws(identifier)),
+    ))(input)?;
+
+    // Parse optional ORDER BY
+    let (input, order_by) = opt(preceded(
+        ws(tag_no_case("ORDER BY")),
+        separated_list1(
+            ws(char(',')),
+            tuple((
+                ws(identifier),
+                opt(alt((
+                    map(ws(tag_no_case("ASC")), |_| SortOrder::Asc),
+                    map(ws(tag_no_case("DESC")), |_| SortOrder::Desc),
+                ))),
+            )),
+        ),
+    ))(input)?;
+
+    let (input, _) = ws(char(')'))(input)?;
+
+    Ok((input, WindowSpec {
+        partition_by: partition_by.unwrap_or_default(),
+        order_by: order_by.unwrap_or_default()
+            .into_iter()
+            .map(|(col, order)| (col, order.unwrap_or(SortOrder::Asc)))
+            .collect(),
+    }))
+}
+
+// Parse window functions: ROW_NUMBER(), RANK(), DENSE_RANK(), LAG(), LEAD() (v2.6.0)
+fn window_function(input: &str) -> IResult<&str, WindowFunction> {
+    alt((
+        map(
+            preceded(ws(tag_no_case("ROW_NUMBER")), tuple((ws(char('(')), ws(char(')'))))),
+            |_| WindowFunction::RowNumber,
+        ),
+        map(
+            preceded(ws(tag_no_case("RANK")), tuple((ws(char('(')), ws(char(')'))))),
+            |_| WindowFunction::Rank,
+        ),
+        map(
+            preceded(ws(tag_no_case("DENSE_RANK")), tuple((ws(char('(')), ws(char(')'))))),
+            |_| WindowFunction::DenseRank,
+        ),
+        // LAG(column) or LAG(column, offset)
+        map(
+            tuple((
+                ws(tag_no_case("LAG")),
+                delimited(
+                    ws(char('(')),
+                    tuple((
+                        ws(identifier),
+                        opt(preceded(ws(char(',')), ws(recognize(pair(opt(char('-')), digit1))))),
+                    )),
+                    ws(char(')')),
+                ),
+            )),
+            |(_, (col, offset))| {
+                let offset_val = offset.and_then(|s| s.parse::<i64>().ok());
+                WindowFunction::Lag(col, offset_val)
+            },
+        ),
+        // LEAD(column) or LEAD(column, offset)
+        map(
+            tuple((
+                ws(tag_no_case("LEAD")),
+                delimited(
+                    ws(char('(')),
+                    tuple((
+                        ws(identifier),
+                        opt(preceded(ws(char(',')), ws(recognize(pair(opt(char('-')), digit1))))),
+                    )),
+                    ws(char(')')),
+                ),
+            )),
+            |(_, (col, offset))| {
+                let offset_val = offset.and_then(|s| s.parse::<i64>().ok());
+                WindowFunction::Lead(col, offset_val)
+            },
+        ),
+    ))(input)
 }
 
 // Parse aggregate functions: COUNT(*), COUNT(col), SUM(col), AVG(col), MIN(col), MAX(col)
@@ -200,11 +349,37 @@ fn case_expression(input: &str) -> IResult<&str, CaseExpression> {
     }))
 }
 
-// Parse select column: either regular column/*, aggregate function, or CASE expression
+// Parse select column: either regular column/*, aggregate function, CASE expression, or literal
 fn select_column(input: &str) -> IResult<&str, SelectColumn> {
     alt((
         map(case_expression, SelectColumn::Case),
         map(aggregate_function, SelectColumn::Aggregate),
+        // Window function: ROW_NUMBER() OVER (...), etc. (v2.6.0)
+        map(
+            tuple((
+                window_function,
+                window_spec,
+                opt(preceded(ws(tag_no_case("AS")), ws(identifier))),
+            )),
+            |(function, spec, alias)| SelectColumn::Window {
+                function,
+                spec,
+                alias,
+            },
+        ),
+        // Scalar subquery: (SELECT ...) or (SELECT ...) AS alias (v2.6.0)
+        map(
+            tuple((
+                subquery,
+                opt(preceded(ws(tag_no_case("AS")), ws(identifier))),
+            )),
+            |(query, alias)| SelectColumn::Subquery {
+                query,
+                alias,
+            },
+        ),
+        // Literal value: numbers, strings, booleans, NULL (v2.6.0)
+        map(ws(value), SelectColumn::Literal),
         map(
             alt((map(ws(char('*')), |_| "*".to_string()), identifier)),
             SelectColumn::Regular,
@@ -396,5 +571,128 @@ pub fn select(input: &str) -> IResult<&str, Statement> {
             ))
         }
         _ => Ok((input, left)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_exists_subquery() {
+        let sql = "EXISTS (SELECT * FROM users)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::Exists(_)));
+    }
+
+    #[test]
+    fn test_parse_not_exists_subquery() {
+        let sql = "NOT EXISTS (SELECT * FROM orders)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::NotExists(_)));
+    }
+
+    #[test]
+    fn test_parse_in_subquery() {
+        let sql = "user_id IN (SELECT id FROM users)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::InSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_not_in_subquery() {
+        let sql = "product_id NOT IN (SELECT id FROM products WHERE active = 'true')";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::NotInSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_scalar_subquery_equals() {
+        let sql = "price = (SELECT MAX(price) FROM products)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::EqualsSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_scalar_subquery_greater_than() {
+        let sql = "age > (SELECT AVG(age) FROM users)";
+        let result = condition_term(sql);
+        assert!(result.is_ok());
+        let (_, cond) = result.unwrap();
+        assert!(matches!(cond, Condition::GreaterThanSubquery(_, _)));
+    }
+
+    #[test]
+    fn test_parse_scalar_subquery_in_select() {
+        let sql = "SELECT name, (SELECT COUNT(*) FROM orders) AS order_count FROM users";
+        let result = select(sql);
+        assert!(result.is_ok());
+        let (_, stmt) = result.unwrap();
+        if let Statement::Select { columns, .. } = stmt {
+            assert_eq!(columns.len(), 2);
+            assert!(matches!(columns[1], SelectColumn::Subquery { .. }));
+        } else {
+            panic!("Expected Select statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_subquery_condition() {
+        let sql = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = 'active')";
+        let result = select(sql);
+        assert!(result.is_ok());
+        let (_, stmt) = result.unwrap();
+        if let Statement::Select { filter, .. } = stmt {
+            assert!(filter.is_some());
+            assert!(matches!(filter.unwrap(), Condition::InSubquery(_, _)));
+        } else {
+            panic!("Expected Select statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_exists_in_select() {
+        let sql = "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders)";
+        let result = select(sql);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let (remaining, stmt) = result.unwrap();
+        assert!(remaining.trim().is_empty(), "Remaining input: {}", remaining);
+        if let Statement::Select { filter, .. } = stmt {
+            assert!(filter.is_some());
+            assert!(matches!(filter.unwrap(), Condition::Exists(_)));
+        } else {
+            panic!("Expected Select statement");
+        }
+    }
+
+    #[test]
+    fn test_where_clause_with_exists() {
+        let sql = "WHERE EXISTS (SELECT 1 FROM orders)";
+        let result = where_clause(sql);
+        assert!(result.is_ok(), "Failed to parse WHERE: {:?}", result.err());
+        let (remaining, filter) = result.unwrap();
+        assert!(remaining.trim().is_empty(), "Remaining after WHERE: {}", remaining);
+        assert!(filter.is_some());
+        assert!(matches!(filter.unwrap(), Condition::Exists(_)));
+    }
+
+    #[test]
+    fn test_condition_with_exists() {
+        let sql = "EXISTS (SELECT 1 FROM orders)";
+        let result = condition(sql);
+        assert!(result.is_ok(), "Failed to parse condition: {:?}", result.err());
+        let (remaining, cond) = result.unwrap();
+        assert!(remaining.trim().is_empty(), "Remaining after condition: {}", remaining);
+        assert!(matches!(cond, Condition::Exists(_)));
     }
 }

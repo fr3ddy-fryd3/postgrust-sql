@@ -15,14 +15,17 @@ Guidance for Claude Code when working with this repository.
 ```bash
 cargo run --release --bin postgrustsql     # Server (port 5432)
 cargo run --example cli                    # CLI client
-cargo test                                 # 202 tests (all passing ✅ v2.5.0)
+cargo test                                 # 213 tests (all passing ✅ v2.6.0)
 ./tests/integration/test_new_types.sh      # Test all 23 data types
 ./tests/integration/test_hash_index.sh     # Test hash & B-tree indexes
 ./tests/integration/test_composite_index.sh # Test composite indexes (v1.9.0)
 ./tests/integration/test_extended_operators.sh  # Test extended WHERE operators
 ./tests/integration/test_explain.sh        # Test EXPLAIN command
 ./tests/integration/test_sql_expressions.sh # Test CASE & set operations (v1.10.0)
-./tests/integration/test_copy_binary.sh # Test COPY Binary Format (v2.5.0)
+./tests/integration/test_copy_binary.sh    # Test COPY Binary Format (v2.5.0)
+./tests/integration/test_subqueries.sh     # Test subqueries (v2.6.0)
+./tests/integration/test_multi_join.sh     # Test multi-JOIN (v2.6.0)
+./tests/integration/test_window_functions.sh # Test window functions (v2.6.0)
 printf "\\\\dt\nquit\n" | nc 127.0.0.1 5432  # Quick netcat test
 
 # Backup & Restore (v2.2.0)
@@ -34,6 +37,9 @@ cargo build --release --bin pgr_dump --bin pgr_restore
 
 **Features:**
 - PostgreSQL-compatible wire protocol (port 5432)
+- **Window Functions (v2.6.0)** - ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD with PARTITION BY/ORDER BY 📊
+- **Subqueries (v2.6.0)** - IN/NOT IN, EXISTS/NOT EXISTS, scalar subqueries, nested queries 🔍
+- **Multi-JOIN (v2.6.0)** - Multiple JOINs in single query + aggregates with JOIN ⚡
 - **Extended Query Protocol (v2.4.0)** - Prepared statements with PARSE/BIND/EXECUTE 📡
 - **COPY Protocol (v2.4.0)** - Bulk data import/export (COPY FROM STDIN / TO STDOUT) 📋
 - 23 data types (~45% PostgreSQL compatibility)
@@ -50,7 +56,7 @@ cargo build --release --bin pgr_dump --bin pgr_restore
 - Composite (multi-column) indexes with AND query optimization (v1.9.0)
 - CASE expressions, UNION/INTERSECT/EXCEPT set operations (v1.10.0)
 
-## Architecture (v1.9.0)
+## Architecture (v2.6.0)
 
 ### Модульная структура:
 ```
@@ -59,14 +65,16 @@ src/
 ├── parser/        # SQL parser (nom) - ddl.rs, dml.rs, queries.rs
 ├── executor/      # Modular executor (v1.5.0) ✨
 │   ├── storage_adapter.rs  # RowStorage trait (Vec<Row> | PagedTable)
-│   ├── conditions.rs       # WHERE evaluation (=, !=, >, <, >=, <=, BETWEEN, LIKE, IN, IS NULL)
+│   ├── conditions.rs       # WHERE evaluation (+ subqueries v2.6.0)
 │   ├── dml.rs             # INSERT/UPDATE/DELETE (with index maintenance)
 │   ├── ddl.rs             # CREATE/DROP/ALTER TABLE
-│   ├── queries.rs         # SELECT (with query planner for indexes)
+│   ├── queries.rs         # SELECT (+ multi-JOIN, aggregates fix v2.6.0)
+│   ├── subquery.rs        # (v2.6.0) Subquery execution (IN/EXISTS/scalar)
+│   ├── window.rs          # (v2.6.0) Window functions executor
 │   ├── vacuum.rs          # VACUUM cleanup (v1.5.1)
 │   ├── index.rs           # CREATE/DROP INDEX (v1.7.0)
 │   ├── explain.rs         # EXPLAIN query analyzer (v1.8.0)
-│   └── legacy.rs          # Minimal dispatcher (146 lines)
+│   └── dispatcher.rs      # Query dispatcher
 ├── index/         # Index implementations (v1.7.0, v1.9.0: composite support)
 │   ├── btree.rs           # BTreeIndex O(log n) - single & composite
 │   ├── hash.rs            # HashIndex O(1) - single & composite
@@ -75,7 +83,7 @@ src/
 ├── storage/       # Binary save/load, WAL, Page-based (v1.5.0)
 └── network/       # TCP server, PostgreSQL protocol
 
-Total: ~2,400 lines of modular code (vs 3009 lines monolith before refactoring)
+Total: ~19,500 lines of code (v2.6.0)
 ```
 
 ### Storage Architecture (v1.5.0):
@@ -188,6 +196,43 @@ ALTER TABLE orders OWNER TO bob;                  -- Change table owner
 GRANT SELECT ON TABLE orders TO alice;            -- Grant table privilege
 GRANT INSERT, UPDATE ON TABLE orders TO readonly; -- Grant multiple privileges
 REVOKE SELECT ON TABLE orders FROM alice;         -- Revoke table privilege
+
+-- Subqueries (v2.6.0)
+SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);  -- IN subquery
+SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE status = 'cancelled');
+SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);
+SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);
+SELECT * FROM users WHERE age > (SELECT AVG(age) FROM users);  -- Scalar subquery
+SELECT name, (SELECT COUNT(*) FROM orders WHERE user_id = users.id) AS order_count FROM users;
+-- Nested subqueries
+SELECT * FROM orders WHERE product_id IN (
+    SELECT id FROM products WHERE price > (SELECT AVG(price) FROM products)
+);
+
+-- Multi-JOIN (v2.6.0)
+SELECT u.name, o.id, s.status, p.amount
+FROM users u
+JOIN orders o ON u.id = o.user_id
+JOIN shipments s ON o.id = s.order_id
+JOIN payments p ON s.id = p.shipment_id;
+
+SELECT COUNT(*) FROM users JOIN orders ON users.id = orders.user_id;  -- Aggregates with JOIN
+SELECT u.name, COUNT(o.id) FROM users u LEFT JOIN orders o ON u.id = o.user_id GROUP BY u.name;
+
+-- Window Functions (v2.6.0)
+SELECT name, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS row_num FROM sales;
+SELECT name, amount, RANK() OVER (ORDER BY amount DESC) AS rank FROM sales;
+SELECT name, amount, DENSE_RANK() OVER (PARTITION BY dept ORDER BY amount) AS dept_rank FROM sales;
+SELECT name, amount, LAG(amount, 1) OVER (ORDER BY id) AS prev_amount FROM sales;
+SELECT name, amount, LEAD(amount, 1) OVER (ORDER BY id) AS next_amount FROM sales;
+-- Combined example
+SELECT
+    dept,
+    name,
+    amount,
+    ROW_NUMBER() OVER (PARTITION BY dept ORDER BY amount DESC) AS dept_row,
+    RANK() OVER (ORDER BY amount DESC) AS overall_rank
+FROM sales;
 ```
 
 ## Data Types (23 total)
@@ -229,90 +274,32 @@ COMMIT;  -- or ROLLBACK
 **Limitation**: Snapshot isolation works within single connection only.
 
 ### Indexes (v1.7.0, v1.9.0: composite support)
-```sql
--- Single-column B-tree index: O(log n), supports range queries
-CREATE INDEX idx_age ON users(age) USING BTREE;
-SELECT * FROM users WHERE age > 30;  -- Can use index for range
-
--- Composite B-tree index: multiple columns (v1.9.0)
-CREATE INDEX idx_city_age ON users(city, age);
-SELECT * FROM users WHERE city = 'NYC' AND age = 30;  -- Uses composite index
-
--- Hash index: O(1) average case, equality only
-CREATE INDEX idx_category ON products(category) USING HASH;
-SELECT * FROM products WHERE category = 'Electronics';  -- O(1) lookup
-
--- Composite hash index (v1.9.0)
-CREATE INDEX idx_name ON people(first_name, last_name) USING HASH;
-SELECT * FROM people WHERE first_name = 'John' AND last_name = 'Doe';  -- O(1)
-
--- Index maintenance
-INSERT/UPDATE/DELETE automatically maintain all indexes (single & composite)
-```
 **Features:**
-- Two index types: **BTREE** (default) and **HASH**
-- **Single-column and multi-column (composite) indexes (v1.9.0)**
+- Two types: **BTREE** (default, O(log n)) and **HASH** (O(1), equality only)
+- Single-column and multi-column (composite) indexes
 - CREATE INDEX / CREATE UNIQUE INDEX / DROP INDEX
 - Automatic query planner (chooses index scan vs seq scan)
-- **Composite index optimization for AND conditions (v1.9.0)**
+- Composite index optimization for AND conditions
 - MVCC-aware visibility checks
-- Index maintenance on INSERT/UPDATE/DELETE
-- B-tree: Supports Equals/GreaterThan/LessThan (range queries)
-- Hash: Supports Equals only (faster for exact matches)
+- Automatic index maintenance on INSERT/UPDATE/DELETE
+- B-tree supports range queries (=, >, <, >=, <=)
+- Hash supports equality only (=) but faster for exact matches
 
 ### Extended WHERE Operators (v1.8.0)
-```sql
--- Comparison operators
-WHERE age >= 25          -- Greater than or equal
-WHERE age <= 35          -- Less than or equal
-
--- Range queries
-WHERE age BETWEEN 25 AND 35  -- Inclusive range
-
--- Pattern matching
-WHERE name LIKE 'A%'     -- Starts with A
-WHERE name LIKE '%son'   -- Ends with 'son'
-WHERE name LIKE '%li%'   -- Contains 'li'
-WHERE name LIKE 'A____'  -- A followed by 4 chars
-
--- List membership
-WHERE status IN ('pending', 'shipped', 'delivered')
-WHERE id IN (1, 2, 3)
-
--- NULL checks
-WHERE email IS NULL
-WHERE email IS NOT NULL
-```
-**Features:**
-- **LIKE pattern matching**: % (any chars), _ (single char)
-- **BETWEEN**: Inclusive range (low AND high)
-- **IN**: Membership in value list
+- **Comparison**: >=, <= (greater/less than or equal)
+- **BETWEEN**: Inclusive range queries (age BETWEEN 25 AND 35)
+- **LIKE**: Pattern matching (% = any chars, _ = single char)
+- **IN**: Membership in value list (status IN ('pending', 'shipped'))
 - **IS NULL / IS NOT NULL**: Null checks
-- Works with all data types
-- Efficient recursive pattern matching for LIKE
+- Works with all data types, efficient recursive pattern matching
 
 ### EXPLAIN Command (v1.8.0)
-```sql
-EXPLAIN SELECT * FROM users WHERE age = 30;
-```
-**Output:**
-```
-QUERY PLAN
-──────────────────────────────────────────────────
-→ Index Scan using idx_age (btree)
-  on users
-  Index Cond: age = Integer(30)
-  Rows: ~1
-  Cost: O(log n)
-──────────────────────────────────────────────────
-```
-**Features:**
-- Shows execution plan for SELECT queries
-- Identifies scan type: Sequential | Index | Unique Index
-- Displays index usage (name + type: hash/btree)
+Shows execution plan for SELECT queries:
+- Scan type: Sequential | Index Scan | Unique Index Scan
+- Index usage (name + type: hash/btree)
 - Cost estimates: O(1), O(log n), O(n)
 - Row count estimates
-- Helps optimize queries and identify missing indexes
+- Helps identify missing indexes and optimize queries
 
 ### PostgreSQL Protocol
 - Auto-detection (peek first 8 bytes)
@@ -356,122 +343,28 @@ Allowed lints (configured in `src/lib.rs`):
 
 - Composite indexes require exact match of all columns (partial prefix matching not yet supported)
 - Hash indexes only support equality (=) - use B-tree for range queries
-- Single JOIN per query
 - WHERE with JOIN not fully supported
 - **DDL operations (CREATE/DROP/ALTER TABLE) auto-commit even inside transactions** (v2.1.0 limitation)
 - DML (INSERT/UPDATE/DELETE) properly isolated between connections (v2.1.0 ✅)
 - EXPLAIN only supports SELECT (not INSERT/UPDATE/DELETE)
 
-## Версионирование
+## Version
 
-**Current**: v2.5.0 (COPY Binary Format)
+**Current**: v2.6.0 (Window Functions + Subqueries + Multi-JOIN) - 213 unit tests passing ✅
 
-**v2.5.0 Changes:**
-- 📦 **COPY Binary Format** - Full PostgreSQL-compatible binary protocol for 3-5x faster import/export
-- 🔢 **Full Numeric encoding** - PostgreSQL base-10000 format (ndigits/weight/sign/dscale)
-- 📡 **Binary COPY TO STDOUT** - Export all 23 data types in binary format
-- 📥 **Binary COPY FROM STDIN** - Import from PostgreSQL binary dumps
-- ⚡ **Performance** - 3-5x faster than CSV for bulk operations
-- 🗂️ **All 23 types supported** - SmallInt, Integer, Real, Numeric, Text, Char, Varchar, Boolean, Date, Timestamp, TimestampTz, UUID, Json, Jsonb, Bytea, Enum
-- 🔧 **PostgreSQL compatibility** - Works with real pg_dump binary output
-- ✅ **202 unit tests passing** (all passing, 7 ignored)
-- 📋 **Integration test** - test_copy_binary.sh validates round-trip export/import
-- 🏗️ **New module** - src/network/copy_binary.rs (~600 lines)
-- 🆔 **OID constants** - Full PostgreSQL type OID mapping for protocol compatibility
+| Version | Key Features |
+|---------|-------------|
+| v2.6.0 | Window Functions, Subqueries, Multi-JOIN, Aggregates with JOIN fix |
+| v2.5.0 | COPY Binary Format (PostgreSQL-compatible, all 23 types) |
+| v2.4.0 | Extended Query Protocol + COPY (prepared statements) |
+| v2.3.0 | RBAC (Role-based access control) |
+| v2.2.0 | Backup & Restore (pgr_dump/pgr_restore) |
+| v2.1.0 | Multi-connection transaction isolation (DML) |
+| v2.0.0 | PostgreSQL wire protocol + System catalogs |
 
-**v2.5.0 Implementation Phases:**
-- 📤 **COPY TO STDOUT** - Full CSV export implementation (was stub in v2.4.0)
-- 📊 **value_to_csv_string()** - Helper function supporting all 23 data types
-- ✅ **Proper CSV escaping** - Quotes, commas, newlines handled correctly
-- 🔒 **MVCC visibility** - Export respects transaction isolation
-- ✅ **196 unit tests passing** (all passing, 7 ignored)
+**Next (v2.7.0)**: Subqueries in FROM clause, CTEs (WITH), Advanced window functions
 
-**v2.4.0 Changes:**
-- 📡 **Extended Query Protocol** - Full support for prepared statements (PARSE/BIND/DESCRIBE/EXECUTE/CLOSE/SYNC)
-- 📋 **COPY Protocol** - Bulk data import/export (COPY FROM STDIN / COPY TO STDOUT stub)
-- 🗄️ **PreparedStatementCache** - Server-side statement and portal caching
-- 💾 **COPY FROM STDIN** - CSV/TSV bulk import with line-by-line INSERT
-- 🔧 **Parameter Substitution** - $1, $2, ... placeholders in prepared statements
-- ✅ **196 unit tests passing** (all passing, 7 ignored)
-- 🐛 Fixed Cargo.toml default-run for multi-binary support
-- 📝 Fixed integration test binary names (pgr_dump/pgr_restore)
-
-**v2.3.0 Changes:**
-- 🔐 **Complete RBAC System** - CREATE/DROP ROLE, GRANT/REVOKE roles
-- 👥 **Table Ownership** - Every table has an owner (creator by default)
-- 🔒 **Table-level Privileges** - GRANT/REVOKE SELECT/INSERT/UPDATE/DELETE ON TABLE
-- ✅ **Permission Enforcement** - Automatic checks before DML/DDL operations
-- 📊 **System Catalogs** - pg_class (relowner), pg_auth_members, table_privileges
-- 🧪 **198 unit tests passing** (9 new RBAC tests)
-- 📝 **ALTER TABLE OWNER TO** - Change table ownership
-- 🌳 **Role Hierarchy** - Recursive role membership inheritance
-
-**v2.2.2 Changes:**
-- 🔧 Fixed Dockerfile binary naming (postgrustql → postgrustsql)
-- 🔧 Fixed Docker user naming (rustdb → postgrust)
-- 📝 Minor improvements and code cleanup
-
-**v2.2.0 Changes:**
-- 🔧 **pgr_dump** - database export utility (SQL + binary formats)
-- 🔄 **pgr_restore** - database import utility with transaction support
-- 📊 SQL format: Full schema + data export (CREATE TYPE/TABLE/INDEX/VIEW + INSERT)
-- ⚡ Binary format: Fast bincode serialization for large databases
-- ✅ Support for all 23 data types, composite indexes, enums, views
-- 🧪 Integration test suite for dump/restore verification
-- 📝 CLI with clap: --schema-only, --data-only, --format options
-
-**v2.1.0 Changes:**
-- 🔐 GlobalTransactionManager with MVCC snapshot isolation
-- ✨ DML (INSERT/UPDATE/DELETE) properly isolated between connections
-- 🔄 Auto-commit pattern for non-transactional operations
-- 📊 READ COMMITTED isolation level (new snapshot per statement)
-- ⚠️ DDL operations still auto-commit (planned for v2.3.0)
-- ✅ 173/173 unit tests passing
-- ✅ Multi-connection isolation test passing
-
-**v2.0.2 Changes:**
-- 🧹 Removed ALL deprecated Table.rows usage (0 warnings, was 17)
-- ✨ All executors now use mandatory &DatabaseStorage (not Optional)
-- 🔧 Fixed 10 aggregate/group_by tests to use PagedTable
-- 📝 Relaxed Clippy configuration (~20 warnings, was 292)
-- ⚙️ Page-based storage now mandatory by default (unwrap_or(true))
-- ✅ 159/159 unit tests passing
-
-**v2.0.1 Changes:**
-- 🔧 Strict Clippy configuration (pedantic + nursery)
-- 🔄 Refactored 16 dispatcher tests for page-based storage
-- ✅ 166/166 unit tests passing
-
-**v2.0.0 Changes:**
-- 🔐 PostgreSQL authentication protocol
-- 📊 System catalogs (pg_catalog.*, information_schema.*)
-- ⚙️ System functions (version(), current_database(), etc.)
-- 🧹 Cleanup legacy code
-
-**v1.11.0 Changes:**
-- 🐛 Fixed 4 failing storage tests (WAL crash recovery)
-- 🧹 Fixed all 26 compiler warnings
-- ✅ 154/154 unit tests passing
-
-**Previous**:
-- v1.10.0 - CASE expressions, UNION/INTERSECT/EXCEPT, Views
-- v1.9.0 - Composite multi-column indexes
-- v1.8.0 - Extended WHERE operators + EXPLAIN command
-- v1.7.0 - Hash indexes with USING clause
-- v1.6.0 - B-tree indexes with query optimization
-- v1.5.1 - VACUUM command for MVCC cleanup
-- v1.5.0 - Page-based storage (125x improvement)
-- v1.4.1 - ALTER TABLE
-- v1.4.0 - OFFSET, DISTINCT, UNIQUE
-- v1.3.2 - Modular architecture
-- v1.3.1 - 18 new data types
-
-**Git tags**: `git tag -a v1.X.Y -m "message"`
-
-**Planned (v2.6.0+)**:
-- 🔍 **Subqueries** - Scalar, IN, EXISTS, derived tables
-- 📊 **Window Functions** - ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, PARTITION BY
-- ✅ **pg_dump Full Compatibility** - Comprehensive testing with real PostgreSQL dumps
+For detailed version history: See `git log` and `ROADMAP.md`
 
 ## Зависимости
 
@@ -509,12 +402,11 @@ hyperfine './target/release/postgrustql'
 
 ## Известные проблемы
 
-1. ✅ ~~**Storage disk tests fail**~~ - FIXED in v1.11.0 (load_database now handles WAL correctly)
-2. ✅ ~~**Compiler warnings**~~ - FIXED in v1.11.0 (all 26 warnings resolved)
-3. **Transaction isolation** - only works within single connection (planned for v2.1.0)
-4. **Parser limitations** - single quotes only, no escape sequences
-5. **CLI pipe issues** - fixed in v1.3.1 (rustyline)
+1. **Parser limitations** - single quotes only, no escape sequences
+2. **Composite indexes** - require exact match of all columns (prefix matching not supported)
+3. **Single JOIN per query** - multiple JOINs planned for v2.7.0+
+4. **DDL auto-commit** - DDL operations commit even inside transactions
 
 ---
 
-**For detailed history**: See git log, FUTURE_UPDATES.md, and test scripts.
+**For detailed history**: See `git log` and `ROADMAP.md`
