@@ -80,12 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔══════════════════════════════════════════════════════════╗");
     println!("║          PostgrustSQL Server Starting...                 ║");
     println!("╠══════════════════════════════════════════════════════════╣");
-    println!("║ Configuration:                                           ║");
     println!("║  • Superuser:    {:<39} ║", config.user);
     println!("║  • Database:     {:<39} ║", config.database);
-    println!("║  • Host:Port:    {}:{:<29} ║", config.host, config.port);
-    println!("║  • Data Dir:     {:<39} ║", config.data_dir);
-    println!("║  • Init DB:      {:<39} ║", config.initdb);
+    println!("║  • Address:      {}:{:<29} ║", config.host, config.port);
     println!("╚══════════════════════════════════════════════════════════╝");
 
     let server = Server::new_with_config(

@@ -10,6 +10,29 @@ use crate::index::Index;
 
 pub struct QueryExecutor;
 
+/// Helper struct for managing intermediate state during multi-JOIN processing (v2.6.0)
+struct IntermediateJoinState {
+    /// Accumulated result rows (each row is Vec<String> of all column values)
+    result_rows: Vec<Vec<String>>,
+
+    /// Accumulated column names in "table.column" format
+    combined_columns: Vec<String>,
+
+    /// Maps "table.column" → index in result row
+    column_map: std::collections::HashMap<String, usize>,
+}
+
+impl IntermediateJoinState {
+    /// Create new empty state
+    fn new() -> Self {
+        Self {
+            result_rows: Vec::new(),
+            combined_columns: Vec::new(),
+            column_map: std::collections::HashMap::new(),
+        }
+    }
+}
+
 impl QueryExecutor {
     /// Evaluate CASE expression for a given row (v1.10.0)
     fn evaluate_case(
@@ -833,130 +856,17 @@ impl QueryExecutor {
 
         let snapshot = tx_manager.get_snapshot();
 
-        // For now, support only one JOIN
-        if joins.len() != 1 {
-            return Err(DatabaseError::ParseError(
-                "Currently only one JOIN is supported".to_string(),
-            ));
+        // v2.6.0: Multi-JOIN support - process JOINs sequentially (left-to-right)
+        let mut state = Self::init_join_state(&from, main_table, &snapshot, database_storage)?;
+
+        // Process each JOIN sequentially
+        for join in &joins {
+            Self::process_single_join(db, join, &mut state, &snapshot, database_storage)?;
         }
 
-        let join = &joins[0];
-
-        // Get the joined table
-        let join_table = db
-            .get_table(&join.table)
-            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
-
-        // Get rows from PagedTable (v2.0.0)
-        let main_paged_table = database_storage.get_paged_table(&from)
-            .ok_or_else(|| DatabaseError::TableNotFound(from.clone()))?;
-        let main_rows = main_paged_table.get_all_rows()?;
-
-        let join_paged_table = database_storage.get_paged_table(&join.table)
-            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
-        let join_rows = join_paged_table.get_all_rows()?;
-
-        // Parse column references (table.column)
-        let parse_col_ref = |ref_str: &str| -> Result<(String, String), DatabaseError> {
-            let parts: Vec<&str> = ref_str.split('.').collect();
-            if parts.len() != 2 {
-                return Err(DatabaseError::ParseError(format!(
-                    "Invalid column reference: {ref_str}"
-                )));
-            }
-            Ok((parts[0].to_string(), parts[1].to_string()))
-        };
-
-        let (left_table_name, left_col_name) = parse_col_ref(&join.on_left)?;
-        let (_right_table_name, right_col_name) = parse_col_ref(&join.on_right)?;
-
-        // Determine which is main and which is joined
-        let (main_join_col, join_join_col) = if left_table_name == from {
-            (left_col_name, right_col_name)
-        } else {
-            (right_col_name, left_col_name)
-        };
-
-        let main_join_idx = main_table
-            .get_column_index(&main_join_col)
-            .ok_or_else(|| DatabaseError::ColumnNotFound(main_join_col.clone()))?;
-
-        let join_join_idx = join_table
-            .get_column_index(&join_join_col)
-            .ok_or_else(|| DatabaseError::ColumnNotFound(join_join_col.clone()))?;
-
-        // Build combined column names
-        let mut combined_columns = Vec::new();
-        for col in &main_table.columns {
-            combined_columns.push(format!("{}.{}", from, col.name));
-        }
-        for col in &join_table.columns {
-            combined_columns.push(format!("{}.{}", join.table, col.name));
-        }
-
-        // Perform the join
-        let mut result_rows = Vec::new();
-
-        for main_row in &main_rows {
-            if !main_row.is_visible_to_snapshot(&snapshot) {
-                continue;
-            }
-
-            let main_join_value = &main_row.values[main_join_idx];
-            let mut matched = false;
-
-            for join_row in &join_rows {
-                if !join_row.is_visible_to_snapshot(&snapshot) {
-                    continue;
-                }
-
-                let join_join_value = &join_row.values[join_join_idx];
-
-                if main_join_value == join_join_value {
-                    matched = true;
-                    // Combine rows
-                    let mut combined_row: Vec<String> = main_row
-                        .values
-                        .iter()
-                        .map(std::string::ToString::to_string)
-                        .collect();
-                    combined_row.extend(join_row.values.iter().map(std::string::ToString::to_string));
-                    result_rows.push(combined_row);
-                }
-            }
-
-            // For LEFT JOIN, include non-matching rows with NULLs
-            if !matched && matches!(join.join_type, JoinType::Left) {
-                let mut combined_row: Vec<String> = main_row
-                    .values
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect();
-                combined_row.extend(vec!["NULL".to_string(); join_table.columns.len()]);
-                result_rows.push(combined_row);
-            }
-        }
-
-        // For RIGHT JOIN, include non-matching rows from join table
-        if matches!(join.join_type, JoinType::Right) {
-            for join_row in &join_rows {
-                if !join_row.is_visible_to_snapshot(&snapshot) {
-                    continue;
-                }
-
-                let join_join_value = &join_row.values[join_join_idx];
-                let matched = main_rows.iter().any(|main_row| {
-                    main_row.is_visible_to_snapshot(&snapshot)
-                        && &main_row.values[main_join_idx] == join_join_value
-                });
-
-                if !matched {
-                    let mut combined_row = vec!["NULL".to_string(); main_table.columns.len()];
-                    combined_row.extend(join_row.values.iter().map(std::string::ToString::to_string));
-                    result_rows.push(combined_row);
-                }
-            }
-        }
+        // Extract result rows from state
+        let mut result_rows = state.result_rows;
+        let combined_columns = state.combined_columns;
 
         // Apply DISTINCT if specified
         if distinct {
@@ -1130,5 +1040,159 @@ impl QueryExecutor {
             }
             _ => Err(DatabaseError::ParseError("Not a query statement".to_string())),
         }
+    }
+
+    // ===== Multi-JOIN Support Methods (v2.6.0) =====
+
+    /// Initialize join state with base table
+    fn init_join_state(
+        table_name: &str,
+        table: &Table,
+        snapshot: &crate::transaction::Snapshot,
+        database_storage: &crate::storage::DatabaseStorage,
+    ) -> Result<IntermediateJoinState, DatabaseError> {
+        let mut state = IntermediateJoinState::new();
+
+        // Load base table rows
+        let paged_table = database_storage
+            .get_paged_table(table_name)
+            .ok_or_else(|| DatabaseError::TableNotFound(table_name.to_string()))?;
+        let rows = paged_table.get_all_rows()?;
+
+        // Convert rows to Vec<Vec<String>> and apply visibility filter
+        for row in rows {
+            if row.is_visible_to_snapshot(snapshot) {
+                let row_values: Vec<String> = row.values.iter().map(ToString::to_string).collect();
+                state.result_rows.push(row_values);
+            }
+        }
+
+        // Build initial column_map with "table_name.column" → index
+        for (idx, col) in table.columns.iter().enumerate() {
+            let qualified_name = format!("{}.{}", table_name, col.name);
+            state.combined_columns.push(qualified_name.clone());
+            state.column_map.insert(qualified_name, idx);
+        }
+
+        Ok(state)
+    }
+
+    /// Process a single JOIN operation on current intermediate state
+    #[allow(clippy::too_many_lines)]
+    fn process_single_join(
+        db: &Database,
+        join: &crate::parser::JoinClause,
+        state: &mut IntermediateJoinState,
+        snapshot: &crate::transaction::Snapshot,
+        database_storage: &crate::storage::DatabaseStorage,
+    ) -> Result<(), DatabaseError> {
+        use crate::parser::JoinType;
+
+        // 1. Load right table
+        let right_table = db
+            .get_table(&join.table)
+            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
+
+        let right_paged_table = database_storage
+            .get_paged_table(&join.table)
+            .ok_or_else(|| DatabaseError::TableNotFound(join.table.clone()))?;
+        let right_rows = right_paged_table.get_all_rows()?;
+
+        // 2. Parse ON clause column references (table.column)
+        let parse_col_ref = |ref_str: &str| -> Result<(String, String), DatabaseError> {
+            let parts: Vec<&str> = ref_str.split('.').collect();
+            if parts.len() != 2 {
+                return Err(DatabaseError::ParseError(format!(
+                    "Invalid column reference: {ref_str}"
+                )));
+            }
+            Ok((parts[0].to_string(), parts[1].to_string()))
+        };
+
+        let (left_table_name, left_col_name) = parse_col_ref(&join.on_left)?;
+        let (_right_table_name, right_col_name) = parse_col_ref(&join.on_right)?;
+
+        // 3. Resolve left column index from column_map (already in intermediate state)
+        let left_col_qualified = format!("{}.{}", left_table_name, left_col_name);
+        let left_idx = *state
+            .column_map
+            .get(&left_col_qualified)
+            .ok_or_else(|| DatabaseError::ColumnNotFound(left_col_qualified.clone()))?;
+
+        // 4. Resolve right column index from right table
+        let right_idx = right_table
+            .get_column_index(&right_col_name)
+            .ok_or_else(|| DatabaseError::ColumnNotFound(right_col_name.clone()))?;
+
+        // 5. Perform nested loop join based on join_type
+        let mut new_result_rows = Vec::new();
+
+        for left_row in &state.result_rows {
+            let left_join_value = &left_row[left_idx];
+            let mut matched = false;
+
+            for right_row in &right_rows {
+                if !right_row.is_visible_to_snapshot(snapshot) {
+                    continue;
+                }
+
+                let right_join_value = right_row.values[right_idx].to_string();
+
+                if left_join_value == &right_join_value {
+                    matched = true;
+                    // Combine rows: left + right
+                    let mut combined_row = left_row.clone();
+                    combined_row.extend(
+                        right_row.values.iter().map(ToString::to_string)
+                    );
+                    new_result_rows.push(combined_row);
+                }
+            }
+
+            // For LEFT JOIN, include non-matching rows with NULLs
+            if !matched && matches!(join.join_type, JoinType::Left) {
+                let mut combined_row = left_row.clone();
+                combined_row.extend(vec!["NULL".to_string(); right_table.columns.len()]);
+                new_result_rows.push(combined_row);
+            }
+        }
+
+        // For RIGHT JOIN, include non-matching rows from right table
+        if matches!(join.join_type, JoinType::Right) {
+            for right_row in &right_rows {
+                if !right_row.is_visible_to_snapshot(snapshot) {
+                    continue;
+                }
+
+                let right_join_value = right_row.values[right_idx].to_string();
+
+                // Check if this right row matched any left row
+                let matched = state.result_rows.iter().any(|left_row| {
+                    left_row[left_idx] == right_join_value
+                });
+
+                if !matched {
+                    // Add NULLs for all left columns + right row values
+                    let mut combined_row = vec!["NULL".to_string(); state.combined_columns.len()];
+                    combined_row.extend(
+                        right_row.values.iter().map(ToString::to_string)
+                    );
+                    new_result_rows.push(combined_row);
+                }
+            }
+        }
+
+        // 6. Update state with new rows
+        state.result_rows = new_result_rows;
+
+        // 7. Extend combined_columns with right table columns
+        let start_idx = state.combined_columns.len();
+        for (offset, col) in right_table.columns.iter().enumerate() {
+            let qualified_name = format!("{}.{}", join.table, col.name);
+            state.combined_columns.push(qualified_name.clone());
+            state.column_map.insert(qualified_name, start_idx + offset);
+        }
+
+        Ok(())
     }
 }
